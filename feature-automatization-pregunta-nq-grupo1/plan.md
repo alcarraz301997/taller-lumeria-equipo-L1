@@ -2,7 +2,7 @@
 
 ## Resumen ejecutivo
 
-La solución propone automatizar el reabastecimiento del banco de preguntas de Lumeria utilizando los registros de preguntas faltantes generados durante la creación de materiales académicos. Cuando el sistema detecte que no existen suficientes preguntas para completar una generación, registrará un faltante asociado a tema, subtema y nivel. Un proceso asíncrono identificará estos registros pendientes y enviará solicitudes automáticas a NQ para generar nuevas preguntas. Las respuestas recibidas serán validadas, sometidas a control de duplicidad e incorporadas automáticamente al banco de preguntas. La solución incluye trazabilidad operativa, manejo de errores y procesamiento desacoplado para minimizar impacto sobre la operación principal del sistema.
+La solución propone automatizar el reabastecimiento del banco de preguntas de Lumeria utilizando los registros de preguntas faltantes generados durante la creación de materiales académicos. Cuando el sistema detecte que no existen suficientes preguntas para completar una generación, registrará un faltante asociado a tema, subtema y nivel. Un proceso asíncrono identificará estos registros pendientes y enviará solicitudes automáticas a NQ para generar nuevas preguntas. Las respuestas recibidas serán validadas, sometidas a control de duplicidad e incorporadas automáticamente al banco de preguntas IA. La solución incluye trazabilidad operativa, manejo de errores y procesamiento desacoplado para minimizar impacto sobre la operación principal del sistema.
 
 ---
 

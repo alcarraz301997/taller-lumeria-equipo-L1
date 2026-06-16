@@ -2,7 +2,7 @@
 
 ## Resumen ejecutivo
 
-Se implementará un flujo automatizado de reabastecimiento del banco de preguntas de Lumeria mediante integración con NQ. Actualmente, cuando durante la generación de material académico no existen suficientes preguntas disponibles, el sistema registra preguntas faltantes asociadas a tema, subtema y nivel. Sin embargo, dichos registros solo cumplen una función de trazabilidad y no activan procesos de reposición. La nueva funcionalidad utilizará estos registros como insumo para generar solicitudes automáticas en segundo plano hacia NQ, permitiendo generar nuevas preguntas e incorporarlas al banco de forma automática. Esto garantizará una mayor disponibilidad de contenido, reducirá la intervención manual y mejorará la capacidad de respuesta ante futuras solicitudes de generación.
+Se implementará un flujo automatizado de reabastecimiento del banco de preguntas de Lumeria mediante integración con NQ. Actualmente, cuando durante la generación de material académico no existen suficientes preguntas disponibles, el sistema registra preguntas faltantes asociadas a tema, subtema y nivel. Sin embargo, dichos registros solo cumplen una función de trazabilidad y no activan procesos de reposición. La nueva funcionalidad utilizará estos registros como insumo para generar solicitudes automáticas en segundo plano hacia NQ, permitiendo generar nuevas preguntas e incorporarlas al banco IA de forma automática. Esto garantizará una mayor disponibilidad de contenido, reducirá la intervención manual y mejorará la capacidad de respuesta ante futuras solicitudes de generación.
 
 ---
 
