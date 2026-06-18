@@ -1,0 +1,70 @@
+[
+  {
+    "title": "Backend Developer",
+    "company": "Innapsis",
+    "start_year": 2018,
+    "end_year": 2020,
+    "city": "Huaura",
+    "descriptions": [
+      "Design, development, and maintenance of web systems using Laravel as the main framework.",
+      "Implementation of best programming practices and code quality assurance.",
+      "Management of SQL databases, ensuring efficient data storage and retrieval.",
+      "Research and adoption of new technologies and best practices to improve development efficiency."
+    ],
+    "tech": [
+      "React",
+      "PHP",
+      "Laravel",
+      "MySQL",
+      "Linux",
+      "Javascript"
+    ]
+  },
+  {
+    "title": "Backend Developer",
+    "company": "Academia Vonex",
+    "start_year": 2020,
+    "end_year": 2022,
+    "city": "Lima",
+    "descriptions": [
+      "Development and maintenance of backend applications using Laravel, applying SOLID principles and clean architecture.",
+      "Implementation of REST APIs and internal services to support communication between system modules.",
+      "Optimization of PostgreSQL queries to improve performance in high-volume data operations.",
+      "Automation of critical processes using queues and cron jobs, increasing operational efficiency.",
+      "Monitoring and management of logs to ensure system stability and quick issue resolution."
+    ],
+    "tech": [
+      "Javascript",
+      "Vue",
+      "PHP",
+      "Laravel",
+      "PostgreSQL",
+      "Linux",
+      "Redis",
+      "Node.js"
+    ]
+  },
+  {
+    "title": "Backend Developer",
+    "company": "Odiseo_Tech",
+    "start_year": 2025,
+    "end_year": null,
+    "city": "Lima",
+    "descriptions": [
+      "Refactoring of complex services following SOLID principles, improving code quality and reducing technical debt.",
+      "Support for system modules, resolution of critical issues, and continuous improvements.",
+      "Development of custom web modules using Laravel."
+    ],
+    "tech": [
+      "Javascript",
+      "Vue",
+      "PHP",
+      "Laravel",
+      "PostgreSQL",
+      "Linux",
+      "Redis",
+      "Node.js",
+      "Hexagonal Architecture"
+    ]
+  }
+]

@@ -1,0 +1,237 @@
+.MuiBox-root.terminal {
+  min-height: 90vh;
+  width: 70%;
+  min-width: 500px;
+  margin: 24px auto;
+  background: var(--color-terminal);
+  border-radius: 10px;
+  border: 2px solid var(--color-border);
+
+  display: flex;
+  flex-direction: column;
+}
+
+.MuiBox-root.windows {
+  background: var(--color-menu);
+  padding: 0.2rem 0.5rem;
+  border-radius: 8px 8px 0 0;
+}
+
+.MuiTypography-root.command {
+  font-family: var(--text-family);
+  padding: 0;
+}
+
+.MuiBox-root.tab-principal {
+  width: 100%;
+  padding: 8px 8px 0 8px;
+  background: var(--color-terminal);
+  flex-shrink: 0;
+}
+
+.MuiTab-root.tab-terminal {
+  font-family: var(--text-family);
+  font-size: var(--text-size-span);
+  background: var(--color-menu);
+  text-transform: none;
+  color: var(--color-text);
+  border-radius: 5px 5px 0 0;
+  margin-right: 5px;
+}
+
+.MuiTab-root.tab-terminal.Mui-selected {
+  border: 2px solid var(--color-select-yellow);
+  border-bottom: none;
+  background: var(--color-main);
+  color: var(--color-select-yellow);
+}
+
+.MuiBox-root.about {
+  flex: 1;
+  overflow-y: auto;
+  padding: 30px;
+  border-top: 2px solid var(--color-border);
+}
+
+.MuiBox-root.sections {
+  flex: 1;
+  overflow-y: auto;
+  padding: 30px;
+  border-top: 2px solid var(--color-border);
+}
+
+.MuiTypography-root.title {
+  margin-top: 20px;
+  font-family: var(--text-family);
+  font-weight: bold;
+  font-size: 1.5rem;
+  color: var(--color-select-yellow);
+}
+
+.MuiTypography-root.description {
+  margin-top: 20px;
+  font-family: var(--text-family);
+  font-size: 1rem;
+  color: var(--color-text);
+}
+
+.MuiBox-root.information {
+  border-radius: 7px;
+  border: 1px solid var(--color-border);
+  margin-top: 20px;
+  padding: 20px;
+  background: var(--color-information);
+}
+
+.MuiTypography-root.text-information {
+  font-family: var(--text-family);
+  color: var(--color-text);
+  font-size: 1rem;
+  word-break: break-all;
+}
+
+.MuiGrid-root.grid-information {
+  display: flex;
+  align-items: center;
+  gap: 1;
+}
+
+.MuiBox-root.whoami {
+  border-left: 3px solid var(--color-select-yellow);
+  margin-top: 20px;
+  padding: 10px;
+  background: var(--color-whoami);
+}
+
+.MuiTypography-root.text-whoami {
+  font-family: var(--text-family);
+  color: var(--color-select-yellow);
+  font-size: 1rem;
+}
+
+.MuiTypography-root.description-whoami {
+  font-family: var(--text-family);
+  color: var(--color-text);
+  font-size: 1rem;
+}
+
+.MuiBox-root.cards {
+  margin-top: 20px;
+}
+
+.MuiCard-root.card {
+  border: 1px solid var(--color-border);
+  background: var(--color-terminal);
+  margin-bottom: 15px;
+}
+
+.MuiCard-root.card:hover {
+  border-color: var(--color-select-yellow);
+}
+
+.MuiCardHeader-root.card-header {
+  color: var(--color-select-yellow);
+  padding-bottom: 0;
+}
+
+.MuiTypography-root.card-title {
+  font-family: var(--text-family);
+  font-size: 1.2rem;
+}
+
+.MuiIconButton-root.icon-button {
+  color: var(--color-text);
+}
+
+.MuiIconButton-root.icon-button:hover {
+  color: var(--color-select-yellow);
+  background: var(--color-terminal);
+}
+
+.MuiTypography-root.card-description {
+  color: var(--color-text);
+  font-family: var(--text-family);
+}
+
+.MuiBox-root.box-projects {
+  margin-top: 15px;
+  border-radius: 3px;
+  border: 1px solid var(--color-select-yellow);
+  padding: 5px;
+  font-size: var(--text-size-span);
+  color: var(--color-select-yellow);
+  /* background: var(--color-background-yellow); */
+}
+
+.MuiBox-root.box-projects:hover {
+  background: var(--color-background-yellow);
+}
+
+.MuiTypography-root.footer-projects {
+  font-size: 1rem;
+  font-family: var(--text-family);
+}
+
+.MuiCard-root.skill-card {
+  border: 1px solid var(--color-border);
+  background: var(--color-terminal);
+  margin-bottom: 15px;
+}
+
+.MuiCard-root.skill-card:hover {
+  border-color: var(--color-select-yellow);
+}
+
+.MuiCardHeader-root.skill-header {
+  color: var(--color-select-yellow);
+  padding-bottom: 0;
+}
+
+.MuiListItem-root.skill-item {
+  word-break: keep-all;
+  font-family: var(--text-family);
+}
+
+.MuiTypography-root.skill-description {
+  color: var(--color-text);
+  font-family: var(--text-family);
+  font-size: var(--text-size-span);
+}
+
+.MuiCard-root.experience-card {
+  border-radius: 0;
+  border-left: 3px solid var(--color-border);
+  background: var(--color-terminal);
+  margin-bottom: 15px;
+}
+
+.MuiCard-root.experience-card:hover {
+  border-color: var(--color-select-yellow);
+}
+
+.MuiTypography-root.experience-subtitle {
+  font-size: var(--text-size-span);
+  color: var(--color-text-description);
+  font-family: var(--text-family);
+  line-height: 1
+}
+
+.MuiBox-root.footer {
+  border: 1px solid var(--color-border);
+  padding: 10px 15px;
+}
+
+.MuiTypography-root.footer-text {
+  font-family: var(--text-family);
+  font-size: var(--text-size-span);
+}
+
+.MuiToggleButtonGroup-root.box-language {
+  background: var(--color-menu);
+}
+
+.MuiTypography-root.text-toggle {
+  /* color: var(--color-text); */
+  font-family: var(--text-family);
+  font-size: 0.9rem;
+}

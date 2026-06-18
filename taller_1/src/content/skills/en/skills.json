@@ -1,0 +1,59 @@
+[
+  {
+    "title": "Languages",
+    "tech": [
+      "PHP",
+      "JavaScript",
+      "Java",
+      "Node.js",
+      "TypeScript"
+    ]
+  },
+  {
+    "title": "Frameworks",
+    "tech": [
+      "Laravel",
+      "React",
+      "Express",
+      "Spring Boot"
+    ]
+  },
+  {
+    "title": "Databases",
+    "tech": [
+      "PostgreSQL",
+      "MongoDB",
+      "MySQL",
+      "Redis",
+      "MariaDB"
+    ]
+  },
+  {
+    "title": "Cloud & DevOps",
+    "tech": [
+      "Docker",
+      "Kubernetes",
+      "AWS",
+      "Azure"
+    ]
+  },
+  {
+    "title": "Tools",
+    "tech": [
+      "Git",
+      "Linux",
+      "Nginx",
+      "GraphQL"
+    ]
+  },
+  {
+    "title": "Security",
+    "tech": [
+      "JWT",
+      "OAuth2",
+      "HTTPS",
+      "CORS",
+      "Rate Limiting"
+    ]
+  }
+]

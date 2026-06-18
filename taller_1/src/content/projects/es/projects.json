@@ -1,0 +1,13 @@
+[
+  {
+    "title": "Terminal-portfolio",
+    "description": "Portafolio de proyectos personales basado en un terminal de Ubuntu Linux.",
+    "github": "https://github.com/alcarraz301997/terminal-portfolio",
+    "url": "https://portfolio.jrmemo.com",
+    "tech": [
+      "React",
+      "Typescript",
+      "CSS"
+    ]
+  }
+]

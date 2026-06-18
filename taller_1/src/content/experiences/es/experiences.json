@@ -1,0 +1,70 @@
+[
+  {
+    "title": "Backend Developer",
+    "company": "Innapsis",
+    "start_year": 2018,
+    "end_year": 2020,
+    "city": "Huaura",
+    "descriptions": [
+      "Diseño, desarrollo y mantenimiento de sistemas web utilizando Laravel como framework principal.",
+      "Implementación de buenas prácticas de programación y aseguramiento de la calidad del código.",
+      "Gestión de bases de datos SQL almacenamiento y recuperación eficiente de datos.",
+      "Investigación y adopción de nuevas tecnologías y mejores prácticas para la eficiencia del desarrollo."
+    ],
+    "tech": [
+      "React",
+      "PHP",
+      "Laravel",
+      "MySQL",
+      "Linux",
+      "Javascript"
+    ]
+  },
+  {
+    "title": "Desarrollador backend",
+    "company": "Academia Vonex",
+    "start_year": 2020,
+    "end_year": 2022,
+    "city": "Lima",
+    "descriptions": [
+      "Desarrollo y mantenimiento de aplicaciones backend con Laravel, aplicando principios SOLID y arquitectura limpia.",
+      "Implementación de APIs REST y servicios internos para soportar la comunicación entre módulos del sistema.",
+      "Optimización de consultas en PostgreSQL para mejorar el rendimiento en operaciones de alto volumen de datos.",
+      "Automatización de procesos críticos mediante queues y cron jobs, aumentando la eficiencia operativa.",
+      "Monitoreo y gestión de logs para asegurar la estabilidad y rápida resolución de incidencias."
+    ],
+    "tech": [
+      "Javascript",
+      "Vue",
+      "PHP",
+      "Laravel",
+      "PostgreSQL",
+      "Linux",
+      "Redis",
+      "Node.js"
+    ]
+  },
+  {
+    "title": "Desarrollador backend",
+    "company": "Odiseo_Tech",
+    "start_year": 2025,
+    "end_year": null,
+    "city": "Lima",
+    "descriptions": [
+      "Refactorización de servicios complejos bajo principios SOLID, mejorando la calidad del código y reduciendo deuda técnica.",
+      "Soporte a módulos, resolución de incidencias críticas y mejoras continuas.",
+      "Desarrollo de módulos web a medida en Laravel."
+    ],
+    "tech": [
+      "Javascript",
+      "Vue",
+      "PHP",
+      "Laravel",
+      "PostgreSQL",
+      "Linux",
+      "Redis",
+      "Node.js",
+      "Hexagonal Architecture"
+    ]
+  }
+]
