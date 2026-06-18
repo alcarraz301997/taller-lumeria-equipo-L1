@@ -6,6 +6,46 @@
 
 ---
 
+## Resumen Ejecutivo
+
+### ¿Qué se prueba?
+
+Se valida la funcionalidad completa de automatización de reposición de preguntas académicas mediante integración con NQ, cubriendo dos historias de usuario (HU-1 y HU-2), sus 16 criterios de aceptación, 5 casos borde, los 3 requisitos no funcionales, y los artículos aplicables de la Constitución del proyecto (seguridad, idempotencia, trazabilidad). Los 27 casos de prueba diseñados verifican:
+
+- **Orquestación de envío (HU-1):** Detección automática de stock insuficiente, división de solicitudes en bloques de 5 preguntas, procesamiento FIFO por fecha de generación, validación de cursos habilitados (Álgebra, Aritmética, Trigonometría, Química), construcción de payload con atributos requeridos (curso, tema, subtema, nivel).
+- **Validación y almacenamiento (HU-2):** Recepción automática de respuestas NQ, validación de duplicidad usando lógica existente de Lumeria, descarte automático de duplicados, solicitud de reposición por preguntas faltantes (máximo 3 ciclos), almacenamiento en tabla temporal de revisión docente, conservación del flujo actual de revisión.
+- **Casos borde:** Consolidación acumulativa de registros repetidos para una misma combinación curso-tema-subtema-nivel, subtemas sin nivel configurado, ciclos de reposición con estado PARTIAL, concurrencia de workers, cursos no habilitados.
+- **Manejo de errores:** HTTP 500 de NQ con backoff y reintentos, respuestas HTTP 200 con body inválido o incompleto, fallo de inserción en BD con rollback total y sin registros huérfanos, NQ devolviendo más preguntas de las solicitadas.
+- **Concurrencia y seguridad:** Doble encolado por requests HTTP simultáneos (condición de carrera), secreto `ODISEO_KEY` nunca expuesto en logs ni stack traces, sanitización de contenido HTML/scripts proveniente de NQ.
+- **Cualidades transversales:** Máquina de estados completa (`PENDING → PROCESSING → PARTIAL/COMPLETED/FAILED`), idempotencia del `GenerationJob` en todos los estados terminales y activos, campos de trazabilidad poblados correctamente al finalizar, división en bloques durante reposición, detección de duplicados intra-lote.
+- **Recuperación y resiliencia:** Stale job recovery mediante comando programado `faltantes:recover-stale` (PROCESSING zombies > 30 min), NQ devuelve menos preguntas de las solicitadas con éxito parcial + reposición, contador `reposition_cycles` incrementado en errores NQ, máximo 3 reintentos por ciclo, caché de respuesta NQ en Redis (TTL 24h) ante fallo de BD para evitar doble consumo de créditos.
+
+### Enfoque de las pruebas
+
+Las pruebas se estructuran con un enfoque **basado en riesgos y trazabilidad**:
+
+- Cada caso de prueba sigue el formato **Given/When/Then/Verification** con resultados medibles (estados en BD, conteo de registros, invocaciones a `NQClient::post`, contenido de logs) sin ambigüedad.
+- La cobertura se organiza por **capas de testing**: unitaria (lógica de detección de stock, validación estructural, reglas de negocio — 100% de reglas), integración (comunicación API NQ, colas Redis, persistencia, FIFO) y seguridad (protección de secretos, ofuscación de logs, sanitización de entrada externa).
+- Se utiliza **mocking de la API NQ** en entornos aislados para validar reintentos, manejo de errores 5xx y ciclos de reposición sin consumir créditos reales.
+- Las **14 roturas detectadas durante sesiones de grilling** entre QA, Tech Lead y Product Owner fueron mitigadas con casos de prueba específicos (ver matriz de trazabilidad), asegurando que defectos potenciales de diseño queden cubiertos antes de la implementación.
+- La **matriz de trazabilidad** (sección 9) mapea cada requisito (16 ACs), caso borde, NFR, artículo de la Constitución y rotura detectada a sus TC correspondientes, garantizando que ningún criterio de aceptación quede sin verificación.
+- El plan sigue los lineamientos de la **Constitución del proyecto (Art. 6 — Testing Standards)**, que exige pruebas automatizadas, cobertura de escenarios críticos de negocio, integraciones externas con casos de éxito y error, y cobertura de casos borde y concurrencia.
+
+### Qué quedó sin cubrir
+
+Aunque los 27 casos de prueba cubren exhaustivamente los requisitos funcionales, de negocio y las roturas detectadas, se identifican las siguientes áreas sin cobertura explícita en este plan:
+
+- **Pruebas de carga/volumen:** No existen TC para escenarios de alto volumen (miles de faltantes pendientes simultáneos) ni pruebas de estrés sobre la cola Redis. El plan de riesgos menciona "alto volumen de faltantes pendientes" como riesgo identificado, pero no se traduce en un TC de rendimiento.
+- **Timeout de NQ como error independiente:** El plan técnico menciona "timeout" junto con HTTP 5xx como errores de NQ, pero TC-11 solo cubre explícitamente HTTP 500. No hay un TC específico para `connection timeout` o `read timeout` del cliente HTTP hacia NQ.
+- **Rate limiting de NQ (HTTP 429):** No se contempla el escenario donde NQ responde con HTTP 429 (Too Many Requests) ni cómo el sistema debe reaccionar (backoff, respetar header `Retry-After`).
+- **Stale job en estado PARTIAL:** TC-23 cubre la recuperación de trabajos zombies en estado PROCESSING (> 30 min), pero no contempla explícitamente un worker que muere mientras el faltante está en PARTIAL. El scheduled command `faltantes:recover-stale` solo actúa sobre `PROCESSING`.
+- **Indisponibilidad de Redis:** TC-27 asume Redis disponible para cachear respuestas de NQ ante fallo de BD. No existe TC que cubra qué sucede si Redis no está disponible durante la operación de caché o durante la operación normal de la cola.
+- **Notificación/alertas de estados FAILED:** No existen TC para verificar que el sistema notifique o alerte (email, dashboard, webhook) cuando un faltante transita a FAILED (ej. `max_reposition_cycles_exceeded`, `curso no habilitado`). La trazabilidad se limita a logs y registros en BD.
+- **Fallo de autenticación NQ (HTTP 401/403):** TC-18 verifica que `ODISEO_KEY` no se expone en logs durante un 401, pero no existe un TC que defina el comportamiento completo del sistema ante credenciales inválidas o expiradas como escenario de error independiente (transición de estado, reintentos, registro de auditoría).
+- **Migración de datos preexistentes:** No se cubre el comportamiento del sistema con registros de faltantes creados antes de la activación de esta funcionalidad. ¿Deben procesarse retroactivamente o solo aplica a nuevos registros?
+
+---
+
 ## 1. Test Strategy
 
 ### 1.1 Test Scope
