@@ -264,11 +264,11 @@ Si esta relación no existe o presenta inconsistencias, el sistema no podrá pro
 
 ---
 
-# 6. NEEDS_CLARIFICATION
+# 6. CLARIFICACIONES RESUELTAS
 
-1. ¿Cuántas preguntas debe solicitar el sistema a NQ por cada registro de faltante detectado?
-2. ¿El sistema debe consolidar registros repetidos antes de enviar solicitudes a NQ o procesarlos individualmente?
-3. ¿El procesamiento hacia NQ debe ejecutarse inmediatamente después del registro o mediante procesamiento batch programado?
+1. **¿Cuántas preguntas por faltante?** → El sistema solicita la cantidad requerida para cubrir el déficit de stock, dividida en bloques de máximo 5 preguntas por petición (ver HU-1 AC-6).
+2. **¿Consolidar o procesar individualmente?** → Los faltantes son acumulativos para una misma combinación de curso, tema, subtema y nivel (ver Plan §1). Se consolida la cantidad requerida total antes de enviar a NQ.
+3. **¿Inmediato o batch programado?** → Procesamiento asíncrono mediante cola FIFO basada en la fecha de generación del material original (ver HU-1 AC-2, AC-3). El job se encola inmediatamente al detectar el faltante.
 
 ---
 
@@ -280,7 +280,7 @@ Si esta relación no existe o presenta inconsistencias, el sistema no podrá pro
 * Lectura automática de registros pendientes de reposición.
 * Envío automático de solicitudes a NQ utilizando tema, subtema y nivel.
 * Procesamiento asíncrono en segundo plano.
-* Inserción automática de preguntas generadas dentro del banco.
+* Inserción automática de preguntas generadas en la tabla temporal de revisión docente (banco IA, previo a banco Lumeria).
 * Validación de integridad y control de duplicados.
 
 ## FUERA (Explícito)

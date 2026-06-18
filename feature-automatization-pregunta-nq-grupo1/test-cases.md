@@ -1,297 +1,401 @@
-# Test Cases
+# Test Cases — Automatización de Preguntas NQ
 
-> Plan de pruebas para la automatización de generación de preguntas entre Lumeria y NQ.
-> Este documento cubre happy path, casos borde, casos de error y escenarios negativos con datos, pasos y resultado esperado.
-
----
-
-## 1. Resumen ejecutivo
-
-Este plan de pruebas valida la automatización de generación de preguntas entre Lumeria y NQ.
-
-El enfoque principal es asegurar que la detección automática de subtemas con stock insuficiente funcione correctamente y que la integración asíncrona no comprometa la integridad del banco de preguntas.
-
-Se validarán flujos exitosos, manejo de errores externos, duplicidad de preguntas, validaciones internas, escenarios límite, trazabilidad de estados y cumplimiento de los principios de la constitución del proyecto.
+> Plan de pruebas para la orquestación asíncrona de reposición de stock académico e integración con NQ.
+> Cobertura: HU-1 (8 ACs), HU-2 (8 ACs), Casos Borde, NFRs, Constitution, Plan.
+> Incluye mitigaciones para 14 roturas detectadas en grilling (concurrencia en encolado, PARTIAL, idempotencia extendida, sanitización, ciclos de reposición, FIFO con reintentos).
 
 ---
 
-## 2. Happy Path
+## 1. Test Strategy
 
-### TC-01 — Detección automática de faltante
+### 1.1 Test Scope
 
-| Campo | Valor |
-|-------|-------|
-| **Datos** | Subtema con stock inferior al mínimo (threshold) durante generación de material |
-| **Pasos** | 1. Usuario solicita generación de material académico. 2. Sistema verifica disponibilidad de preguntas en el banco por tema, subtema y nivel. 3. Detecta que el stock es insuficiente para completar la solicitud. 4. Registra el faltante con tema, subtema y nivel. |
-| **Esperado** | Se crea registro de faltante con `{ tema, subtema, nivel }`. Se dispara `GenerationJob` a la cola. Estado inicial del faltante: `pending`. |
+| Tipo | Alcance | Objetivo |
+|------|---------|----------|
+| Unit | Lógica de detección de stock, validación estructural, reglas de negocio | 100% de reglas |
+| Integration | Comunicación API NQ, colas Redis, persistencia, FIFO | Escenarios felices + fallos externos |
+| Security | Protección de secretos, ofuscación de logs, sanitización de entrada externa | Invariantes de la Constitución |
 
----
+### 1.2 Test Environment
 
-### TC-02 — Generación exitosa y reabastecimiento del banco
-
-| Campo | Valor |
-|-------|-------|
-| **Datos** | Faltante pendiente válido. API NQ disponible. |
-| **Pasos** | 1. `GenerationJob` toma el faltante de la cola Redis/Horizon. 2. Construye payload `{ tema, subtema, nivel }` y lo envía a NQ. 3. NQ responde exitosamente con **5 preguntas** válidas. 4. Sistema valida estructura de cada pregunta. 5. Inserta las 5 preguntas en el banco. |
-| **Esperado** | 5 preguntas insertadas correctamente en el banco. `GenerationJob` finaliza con estado `completed`. Faltante marcado como procesado. |
+Las pruebas se ejecutan en entornos aislados. La API de NQ se simula (mocks) para validar reintentos y manejo de errores 5xx sin consumir créditos reales.
 
 ---
 
-### TC-03 — Ciclo de vida completo (trazabilidad de estados)
+## 2. Happy Path — HU-1 (Orquestación de envío)
 
-| Campo | Valor |
-|-------|-------|
-| **Datos** | Faltante válido, NQ responde OK, inserción exitosa |
-| **Pasos** | 1. Faltante registrado → estado `pending`. 2. `GenerationJob` inicia procesamiento → estado `processing`. 3. NQ responde, preguntas insertadas → estado `completed`. 4. Se consulta trazabilidad del proceso. |
-| **Esperado** | Trazabilidad registra los 3 estados en orden: `pending` → `processing` → `completed`. No se permite transición directa `pending` → `completed`. |
+### TC-01 · Detección de stock insuficiente
 
----
+| Atributo | Valor |
+|----------|-------|
+| Prioridad | P1 |
+| Traces To | HU-1, AC-1 |
 
-### TC-04 — Notificación de completado al usuario
-
-| Campo | Valor |
-|-------|-------|
-| **Datos** | `GenerationJob` finaliza exitosamente |
-| **Pasos** | 1. `GenerationJob` completa procesamiento con estado `completed`. 2. Sistema ejecuta notificación post-job. |
-| **Esperado** | Usuario recibe notificación de que el reabastecimiento se completó exitosamente. |
+**Given:** Un subtema con stock = 2 (threshold mínimo = 5) durante la generación de material.
+**When:** Se solicita la generación y el sistema detecta que `question_count < threshold`.
+**Then:** Se registra un faltante con `{curso, tema, subtema, nivel, estado = PENDING}`. Se encola un `GenerationJob` en Redis.
 
 ---
 
-## 3. Happy Path Negativo
+### TC-02 · División en bloques de 5 preguntas
 
-### TC-05 — Stock suficiente no genera faltante
+| Atributo | Valor |
+|----------|-------|
+| Prioridad | P1 |
+| Traces To | HU-1, AC-6 |
 
-| Campo | Valor |
-|-------|-------|
-| **Datos** | Subtema con stock igual o superior al mínimo requerido |
-| **Pasos** | 1. Usuario solicita generación de material. 2. Sistema verifica stock de preguntas para el subtema. 3. Stock es suficiente. |
-| **Esperado** | No se registra faltante. No se crea `GenerationJob`. La generación de material continúa normalmente con las preguntas existentes. |
-
----
-
-## 4. Casos Borde
-
-### TC-06 — Subtema sin nivel configurado (CB-1)
-
-| Campo | Valor |
-|-------|-------|
-| **Datos** | Faltante registrado cuyo subtema no tiene nivel configurado en la estructura académica del banco |
-| **Pasos** | 1. Sistema intenta construir payload `{ tema, subtema, nivel }` para enviar a NQ. 2. Detecta que el subtema no tiene nivel asociado. 3. Valida la regla de negocio: "sin nivel no se puede enviar a NQ". |
-| **Esperado** | Se bloquea el envío a NQ. `GenerationJob` → `failed`. Se registra error con motivo: `subtema sin nivel configurado`. No se envía solicitud a NQ. |
+**Given:** Un registro de faltante que requiere 12 preguntas para completar stock.
+**When:** El `GenerationJob` inicia el procesamiento y la API de NQ tiene límite de 5 preguntas por petición.
+**Then:** El sistema divide la solicitud en 3 peticiones: bloque 1 (5), bloque 2 (5), bloque 3 (2). Se respeta el límite de 5 por transacción.
 
 ---
 
-### TC-07 — Registros repetidos consolidados antes de envío (CB-2)
+### TC-03 · Orden de procesamiento FIFO por fecha de generación + reintento conserva timestamp
 
-| Campo | Valor |
-|-------|-------|
-| **Datos** | 3 registros de faltante idénticos (mismo tema, subtema, nivel) generados antes de que el procesamiento los tome |
-| **Pasos** | 1. Durante generación de material se registran 3 faltantes iguales. 2. Procesador de faltantes identifica los 3 registros. 3. Consolida en una única solicitud a NQ (deduplica por tema + subtema + nivel). 4. Envía 1 solicitud a NQ. |
-| **Esperado** | 1 sola solicitud enviada a NQ (no 3). 5 preguntas generadas e insertadas una sola vez. Los 3 registros de faltante se marcan como procesados. |
+| Atributo | Valor |
+|----------|-------|
+| Prioridad | P1 |
+| Traces To | HU-1, AC-2, AC-3 |
 
----
-
-### TC-08 — Concurrencia sobre el mismo faltante (CB-5)
-
-| Campo | Valor |
-|-------|-------|
-| **Datos** | Dos `GenerationJob` compiten por el mismo faltante simultáneamente |
-| **Pasos** | 1. Job A toma faltante X y cambia su estado a `processing`. 2. Job B intenta tomar el mismo faltante X mientras Job A está en ejecución. 3. Sistema verifica que el faltante ya está en `processing`. |
-| **Esperado** | Job B se bloquea. Solo Job A procesa el faltante. No se duplica la solicitud a NQ ni las preguntas insertadas. |
+**Given:** Tres faltantes pendientes con fechas de generación de material: `F1 (10:00)`, `F2 (10:05)`, `F3 (10:10)`. `F1` falla con `HTTP 500` y vuelve a `PENDING`.
+**When:** El worker asíncrono consume la cola FIFO tras el reintento de `F1`.
+**Then:** `F1` conserva su timestamp original (`10:00`). El orden de procesamiento es `F1 → F2 → F3`, con `F1` al frente por ser el más antiguo. Verificación: `SELECT faltante_id, MIN(timestamp) FROM process_traces WHERE estado = 'PENDING' GROUP BY faltante_id ORDER BY MIN(timestamp) ASC` retorna `['F1','F2','F3']`. `NQClient::post` recibe llamadas en orden `F1, F2, F3`.
 
 ---
 
-### TC-09 — NQ devuelve preguntas ya existentes en el banco (CB-3)
+### TC-04 · Payload con atributos requeridos
 
-| Campo | Valor |
-|-------|-------|
-| **Datos** | NQ devuelve 5 preguntas. 2 de ellas ya existen en el banco con contenido idéntico |
-| **Pasos** | 1. Job envía solicitud a NQ. 2. NQ responde con 5 preguntas. 3. Sistema compara cada pregunta contra el banco existente. 4. Detecta 2 duplicadas. |
-| **Esperado** | 3 preguntas nuevas insertadas. 2 rechazadas por duplicidad. Se registra motivo de rechazo para cada duplicada. |
+| Atributo | Valor |
+|----------|-------|
+| Prioridad | P1 |
+| Traces To | HU-1, AC-5 |
 
----
-
-## 5. Casos de Error
-
-### TC-10 — API NQ responde HTTP 500
-
-| Campo | Valor |
-|-------|-------|
-| **Datos** | NQ retorna error interno `HTTP 500` |
-| **Pasos** | 1. `GenerationJob` envía solicitud a NQ. 2. NQ responde `500 Internal Server Error`. 3. Sistema ejecuta estrategia de retry con backoff exponencial (máximo 3 intentos). 4. Tras 3 intentos fallidos, el job finaliza. |
-| **Esperado** | Se ejecutan 3 reintentos con backoff exponencial. Tras agotar reintentos, `GenerationJob` → `failed`. Error registrado con trace completo y timestamp. |
+**Given:** Un faltante con `{curso = Álgebra, tema = Ecuaciones, subtema = Lineales, nivel = 1}`.
+**When:** El sistema construye el payload para enviar a NQ.
+**Then:** El payload contiene exactamente `{curso, tema, subtema, nivel}`. No se envían atributos adicionales ni faltan los requeridos.
 
 ---
 
-### TC-11 — Timeout de NQ (sin respuesta)
+## 3. Happy Path — HU-2 (Validación y almacenamiento)
 
-| Campo | Valor |
-|-------|-------|
-| **Datos** | NQ no responde dentro del timeout configurado de 300s |
-| **Pasos** | 1. `GenerationJob` envía solicitud a NQ. 2. Timeout de 300s se alcanza sin respuesta. 3. Sistema ejecuta retry. 4. Tras 3 intentos sin respuesta, el job finaliza. |
-| **Esperado** | Retry automático (máx. 3 intentos). `GenerationJob` → `failed`. Se registra timeout con timestamp y contexto. |
+### TC-05 · Recepción, validación de duplicidad y almacenamiento en tabla temporal
 
----
+| Atributo | Valor |
+|----------|-------|
+| Prioridad | P1 |
+| Traces To | HU-2, AC-1, AC-2, AC-3, AC-6, AC-7 |
 
-### TC-12 — Pregunta con estructura inválida (validación fallida)
-
-| Campo | Valor |
-|-------|-------|
-| **Datos** | NQ responde con pregunta que no cumple la estructura requerida (ej: sin enunciado, sin opciones, campos nulos) |
-| **Pasos** | 1. NQ devuelve payload con pregunta malformada. 2. Sistema ejecuta validación estructural de cada pregunta antes de insertar. 3. Detecta campos obligatorios faltantes o inválidos. |
-| **Esperado** | Pregunta rechazada con estado `VALIDATING FAILED`. No se inserta en el banco. Se registra motivo específico del rechazo. Las preguntas válidas del mismo lote sí se insertan. |
+**Given:** NQ responde con 5 preguntas válidas y no duplicadas. El validador de duplicidad de Lumeria está operativo.
+**When:** El sistema recibe la respuesta de NQ y ejecuta validación de duplicidad.
+**Then:** Las 5 preguntas se insertan en la tabla temporal de revisión docente (banco de preguntas IA, previo a banco Lumeria). Las preguntas **no** van directo al banco final, permanecen en flujo de revisión docente existente. Verificación: `COUNT(*) FROM preguntas_temporal WHERE faltante_id = F1 AND source = 'NQ'` = 5.
 
 ---
 
-### TC-13 — Créditos NQ insuficientes
+## 4. Edge Cases
 
-| Campo | Valor |
-|-------|-------|
-| **Datos** | NQ responde indicando que no tiene créditos disponibles para generar |
-| **Pasos** | 1. `GenerationJob` envía solicitud a NQ. 2. NQ responde con error de créditos agotados. 3. Sistema identifica que no es un error transitorio (no aplica retry). |
-| **Esperado** | No se insertan preguntas. `GenerationJob` → `failed`. Se notifica al administrador del sistema. Se registra error con contexto de créditos. |
+### TC-06 · Consolidación acumulativa de registros repetidos
 
----
+| Atributo | Valor |
+|----------|-------|
+| Prioridad | P1 |
+| Traces To | Spec — Caso Borde (múltiples faltantes misma combinación) / Plan §1 (acumulativos) |
 
-### TC-14 — Partial success (respuesta mixta de NQ)
-
-| Campo | Valor |
-|-------|-------|
-| **Datos** | NQ devuelve 5 preguntas. 3 válidas, 2 con estructura inválida |
-| **Pasos** | 1. NQ responde con payload mixto. 2. Sistema valida cada pregunta individualmente. 3. Inserta las 3 válidas. 4. Rechaza las 2 inválidas. |
-| **Esperado** | 3 preguntas insertadas correctamente. 2 rechazadas con motivo registrado. `GenerationJob` → `completed` (con advertencia de rechazos parciales). |
+**Given:** Se generan 3 registros de faltante para la misma combinación `(Álgebra, Ecuaciones, Lineales, Nivel 1)` con `requested_quantity = 5` cada uno, antes de ser procesados.
+**When:** El worker asíncrono identifica los registros pendientes para esa combinación.
+**Then:** El sistema suma las cantidades: `requested_quantity total = 15`. Se envía a NQ una solicitud consolidada con `quantity = 15` (dividida en 3 bloques de 5 por TC-02), no 3 solicitudes independientes de 5. Verificación: `COUNT(DISTINCT NQClient::post para combinación X)` = 3 bloques agrupados bajo un mismo proceso, no 9 llamadas independientes.
 
 ---
 
-## 6. Escenarios Negativos
+### TC-07 · Subtema sin nivel configurado
 
-### TC-15 — GenerationJob no se encola (fallo Redis / queue)
+| Atributo | Valor |
+|----------|-------|
+| Prioridad | P1 |
+| Traces To | Spec — Caso Borde (inconsistencias en configuración académica) |
 
-| Campo | Valor |
-|-------|-------|
-| **Datos** | Redis o Horizon no disponible al momento de disparar el job |
-| **Pasos** | 1. Sistema detecta faltante y registra el registro. 2. Intenta encolar `GenerationJob`. 3. Conexión a Redis falla o cola no disponible. |
-| **Esperado** | `GenerationJob` no se encola. Faltante permanece en `pending`. Se registra error de infraestructura. Se notifica al administrador. |
-
----
-
-### TC-16 — Payload malformado hacia NQ
-
-| Campo | Valor |
-|-------|-------|
-| **Datos** | Datos del faltante corruptos o incompletos (tema vacío, subtema nulo, nivel inválido) |
-| **Pasos** | 1. `GenerationJob` intenta construir payload para NQ. 2. Validación pre-envío detecta datos inválidos en el faltante. |
-| **Esperado** | No se envía solicitud a NQ. `GenerationJob` → `failed`. Error registrado con detalle del campo inválido. |
+**Given:** Un faltante cuyo subtema no tiene nivel asociado en la estructura académica del banco.
+**When:** `GenerationJob` intenta construir el payload `{curso, tema, subtema, nivel}`.
+**Then:** El sistema detecta que `nivel = NULL` y bloquea el envío a NQ. El faltante transita a `FAILED` con motivo: `subtema sin nivel configurado`. No se consume crédito de NQ. Verificación: `NQClient::post` no es invocado. `faltantes.estado = 'FAILED'`.
 
 ---
 
-### TC-17 — Falla inserción en BD tras respuesta exitosa de NQ (resultados huérfanos)
+### TC-08 · Reposición automática por duplicados + estado PARTIAL + límite de 3 ciclos
 
-| Campo | Valor |
-|-------|-------|
-| **Datos** | NQ responde exitosamente con 5 preguntas válidas, pero la base de datos de preguntas no está disponible |
-| **Pasos** | 1. NQ devuelve 5 preguntas válidas. 2. Sistema intenta insertar en el banco de preguntas. 3. Conexión a BD falla o lanza excepción durante la inserción. |
-| **Esperado** | No se insertan preguntas huérfanas ni parciales. Todo el proceso → `failed`. Las preguntas recibidas de NQ se descartan (no se persisten). Error registrado con trace completo, timestamp y contexto. |
+| Atributo | Valor |
+|----------|-------|
+| Prioridad | P1 |
+| Traces To | HU-2, AC-4, AC-5, AC-8 / Plan §2 (estado PARTIAL) |
 
----
-
-### TC-18 — Transición a failed sin omitir estado intermedio
-
-| Campo | Valor |
-|-------|-------|
-| **Datos** | Faltante válido. Error durante el procesamiento (ej: NQ 500 irrecuperable) |
-| **Pasos** | 1. Faltante creado → `pending`. 2. `GenerationJob` inicia → `processing`. 3. Ocurre error durante el envío a NQ (sin reintentos exitosos). 4. Job finaliza con error → `failed`. 5. Se consulta trazabilidad del proceso. |
-| **Esperado** | Trazabilidad: `pending` → `processing` → `failed`. No se permite omitir el estado `processing`. No hay transición directa `pending` → `failed`. |
-
----
-
-### TC-19 — Notificación de fallo al usuario
-
-| Campo | Valor |
-|-------|-------|
-| **Datos** | `GenerationJob` finaliza en estado `failed` |
-| **Pasos** | 1. `GenerationJob` falla durante el procesamiento. 2. Sistema ejecuta notificación post-job. |
-| **Esperado** | Usuario recibe notificación de que el reabastecimiento falló, incluyendo motivo del fallo. |
+**Given:** NQ genera 5 preguntas. El validador detecta 2 duplicadas. `requested_quantity = 5`, `generated_quantity = 3`.
+**When:** El sistema descarta las 2 duplicadas y verifica que `generated_quantity (3) < requested_quantity (5)`.
+**Then:** 
+- El faltante transita a `PARTIAL`. 
+- El sistema envía automáticamente solicitud de reposición a NQ por las 2 preguntas faltantes, respetando límite de 5 por bloque.
+- Si la reposición devuelve 2 válidas → `generated_quantity = 5` → `COMPLETED`.
+- Si la reposición vuelve a tener duplicados → nuevo ciclo de reposición.
+- **Máximo 3 ciclos de reposición.** Si tras 3 ciclos `generated_quantity < requested_quantity`, transita a `FAILED` con motivo: `max_reposition_cycles_exceeded`.
+- Verificación: `reposition_cycles` en metadata del faltante ≤ 3.
 
 ---
 
-### TC-20 — Registro de errores con trazabilidad completa (Constitution Art. 3.4.1)
+### TC-09 · Concurrencia — worker no procesa faltante en PROCESSING ni PARTIAL
 
-| Campo | Valor |
-|-------|-------|
-| **Datos** | Cualquier error durante el procesamiento del job (timeout, HTTP 500, validación, etc.) |
-| **Pasos** | 1. Ocurre un error durante la ejecución del `GenerationJob`. 2. Sistema captura y registra el error. 3. Se consulta el log de errores. |
-| **Esperado** | El registro de error contiene: mensaje descriptivo, excepción original (trace completo), identificador del proceso o solicitud asociada, timestamp exacto, contexto adicional (usuario, curso, módulo). |
+| Atributo | Valor |
+|----------|-------|
+| Prioridad | P2 |
+| Traces To | NFR-3 / Spec — Caso Borde (reposición en curso) / Constitution Art. 3 |
 
----
-
-### TC-21 — Idempotencia del GenerationJob (Constitution Art. 4.4)
-
-| Campo | Valor |
-|-------|-------|
-| **Datos** | Mismo faltante procesado exitosamente. Se intenta ejecutar un segundo job con la misma entrada |
-| **Pasos** | 1. Job A procesa faltante X → 5 preguntas insertadas → `completed`. 2. Job B (mismo faltante X) se ejecuta nuevamente (por reintento, duplicado de cola o error de infraestructura). 3. Sistema verifica si el faltante X ya fue completado. |
-| **Esperado** | Job B detecta que X ya fue procesado exitosamente. No envía nueva solicitud a NQ. No duplica preguntas en el banco. Job B finaliza sin efectos laterales. |
+**Given:** Faltante `F1` en estado `PENDING`. Dos workers consumen la misma cola simultáneamente.
+**When:** Worker A ejecuta `UPDATE faltantes SET estado = 'PROCESSING' WHERE id = F1 AND estado = 'PENDING'` → 1 fila afectada. Worker B ejecuta la misma query → 0 filas afectadas.
+**Then:** Worker B hace early return (no lanza excepción, no reencola, no llama a NQ). `F1` es procesado una sola vez. Verificación: `NQClient::post` invocado exactamente 1 vez para `F1`. **PARTIAL también es bloqueante**: mismo comportamiento si `F1.estado = 'PARTIAL'` — el UPDATE condicional con `WHERE estado IN ('PENDING', 'PARTIAL')` falla y el worker aborta.
 
 ---
 
-### TC-22 — Clasificación de excepciones según Constitution Art. 3.4.2
+### TC-10 · Curso no habilitado bloquea el envío
 
-| Campo | Valor |
-|-------|-------|
-| **Datos** | Distintos tipos de error durante el procesamiento |
-| **Pasos** | 1. Simular error de regla de negocio (subtema sin nivel). 2. Simular error de autenticación con NQ (ODISEO_KEY inválida). 3. Simular error no controlado (excepción genérica). 4. Verificar el tipo de excepción lanzada y su código HTTP. |
-| **Esperado** | Regla de negocio → `DomainException` (409). Autenticación → `UnauthorizedException` (401). Error no controlado → `Exception` (500). Cada excepción se clasifica correctamente según ADR-0007. |
+| Atributo | Valor |
+|----------|-------|
+| Prioridad | P1 |
+| Traces To | HU-1, AC-4 |
 
----
-
-### TC-23 — ODISEO_KEY no expuesta en logs ni respuestas (Constitution Art. 6.3)
-
-| Campo | Valor |
-|-------|-------|
-| **Datos** | Error durante comunicación con NQ usando `ODISEO_KEY` |
-| **Pasos** | 1. `GenerationJob` falla al comunicarse con NQ (error de autenticación). 2. Sistema registra el error en logs. 3. Se consultan los logs de error y la respuesta HTTP del job. |
-| **Esperado** | Los logs contienen descripción del error pero **no** exponen el valor de `ODISEO_KEY`. La key no aparece en mensajes de error, stack traces ni respuestas HTTP. |
+**Given:** Un faltante pertenece al curso `Geometría`, el cual no está en la lista de cursos habilitados (`Álgebra, Aritmética, Trigonometría, Química`).
+**When:** El sistema valida el curso antes de enviar a NQ.
+**Then:** El envío se bloquea. El faltante transita a `FAILED` con motivo: `curso no habilitado para integración NQ`. No se consume crédito. Verificación: `NQClient::post` no es invocado. `faltantes.estado = 'FAILED'`.
 
 ---
 
-## 7. Matriz de trazabilidad
+## 5. Error Scenarios
 
-| Fuente | ID | Caso de prueba |
-|--------|-----|---------------|
-| **Spec — AC-1.1** | Registro de faltantes | TC-01, TC-05 |
-| **Spec — AC-1.2** | Envío asíncrono a NQ | TC-02, TC-10, TC-11, TC-16 |
-| **Spec — AC-1.3** | Inserción y validación | TC-02, TC-09, TC-12, TC-14 |
-| **Spec — CB-1** | Subtema sin nivel | TC-06 |
-| **Spec — CB-2** | Registros repetidos | TC-07 |
-| **Spec — CB-3** | Preguntas duplicadas | TC-09 |
-| **Spec — CB-4** | API NQ error / timeout | TC-10, TC-11 |
-| **Spec — CB-5** | Concurrencia mismo faltante | TC-08 |
-| **Spec — NFR-1** | Procesamiento asíncrono | TC-02, TC-15 |
-| **Spec — NFR-2** | Integridad y no duplicados | TC-09, TC-12, TC-14 |
-| **Spec — NFR-3** | Concurrencia sin bloqueo | TC-08 |
-| **Constitution — Art. 3.2** | Trazabilidad de estados | TC-03, TC-18 |
-| **Constitution — Art. 3.3** | Integridad — no resultados parciales | TC-17 |
-| **Constitution — Art. 3.4.1** | Registro obligatorio de errores | TC-20 |
-| **Constitution — Art. 3.4.2** | Clasificación de excepciones | TC-22 |
-| **Constitution — Art. 4.2** | Notificación de resultado | TC-04, TC-19 |
-| **Constitution — Art. 4.4** | Idempotencia de jobs | TC-21 |
-| **Constitution — Art. 6.3** | ODISEO_KEY no expuesta | TC-23 |
+### TC-11 · NQ HTTP 500 — registro permanece PENDING con backoff
+
+| Atributo | Valor |
+|----------|-------|
+| Prioridad | P1 |
+| Traces To | HU-1, AC-8 |
+
+**Given:** La API de NQ responde `HTTP 500` en cada intento.
+**When:** El `GenerationJob` envía la solicitud y recibe `500`.
+**Then:** El sistema ejecuta reintentos con backoff incremental. Si todos fallan, el registro **permanece en estado `PENDING`** (no transita a `FAILED`) con `retry_count` incrementado y conservando su timestamp original de generación. El intento fallido queda registrado en logs. Verificación: `faltantes.estado = 'PENDING'`, `faltantes.retry_count > 0`.
 
 ---
 
-## 8. Resultado esperado
+### TC-12 · NQ responde HTTP 200 con body inválido o incompleto
 
-| Aspecto | Descripción |
-|---------|-------------|
-| **Abastecimiento** | El sistema mantendrá abastecimiento automático del banco de preguntas sin intervención manual |
-| **Dependencia** | Se reducirá dependencia operativa del docente |
-| **Escalabilidad** | La integración soportará escalabilidad futura sin afectar estabilidad del ecosistema Lumeria |
-| **Trazabilidad** | La arquitectura garantizará trazabilidad, resiliencia, consistencia de datos y control sobre dependencias externas |
-| **Cobertura** | 23 casos de prueba cubriendo happy path (4), happy path negativo (1), casos borde (4), casos de error (5) y escenarios negativos (9) |
+| Atributo | Valor |
+|----------|-------|
+| Prioridad | P2 |
+| Traces To | Spec — Caso Borde (respuesta incompleta o inválida de NQ) |
+
+**Given:** NQ responde `HTTP 200` pero el body está vacío (`{}`) o no contiene el campo `questions`.
+**When:** El sistema intenta parsear la respuesta.
+**Then:** El sistema detecta que la respuesta no cumple el schema esperado. El registro permanece en `PENDING`. Se registra error con motivo: `respuesta NQ inválida`. No se insertan preguntas. Verificación: `questions.count` sin cambio. Log contiene entry con `reason = 'invalid_nq_response'`.
+
+---
+
+### TC-13 · Falla de BD durante inserción — rollback total y sin huérfanos
+
+| Atributo | Valor |
+|----------|-------|
+| Prioridad | P1 |
+| Traces To | Constitution Art. 7 / Plan §2 (integridad) |
+
+**Given:** NQ responde con 5 preguntas válidas, pero `pgsql_master` lanza excepción durante el `INSERT` en la tabla temporal.
+**When:** La transacción de inserción falla.
+**Then:** Rollback total. Cero preguntas persistidas (no hay huérfanos). Las preguntas recibidas de NQ **se descartan** (no se almacenan en caché). El faltante permanece en `PENDING` para reprocesamiento. En el reintento, el sistema solicita nuevas preguntas a NQ (implica nuevo consumo de créditos). El error se registra con `trace_id`, `timestamp` y `faltante_id`. Verificación: `COUNT(*) FROM preguntas_temporal WHERE faltante_id = F1` = 0. `faltantes.estado = 'PENDING'`.
+
+---
+
+### TC-14 · NQ devuelve más preguntas de las solicitadas
+
+| Atributo | Valor |
+|----------|-------|
+| Prioridad | P2 |
+| Traces To | Constitution Art. 2 (sanitización de entrada externa) |
+
+**Given:** Bloque de 2 preguntas enviado a NQ.
+**When:** NQ responde con 5 preguntas (ignorando el límite solicitado de 2).
+**Then:** El sistema acepta únicamente las primeras 2 preguntas de la respuesta o descarta el excedente. No se insertan más preguntas de las solicitadas para ese bloque. Verificación: `COUNT(*) FROM preguntas_temporal WHERE bloque_id = B3` ≤ 2.
+
+---
+
+## 6. Concurrencia y seguridad en encolado
+
+### TC-15 · Doble encolado por requests HTTP simultáneos
+
+| Atributo | Valor |
+|----------|-------|
+| Prioridad | P1 |
+| Traces To | HU-1, AC-1 / NFR-3 |
+
+**Given:** Dos requests HTTP simultáneos generan material para el mismo subtema `S1` con stock insuficiente.
+**When:** Ambos requests ejecutan la detección de faltantes en el mismo milisegundo (antes de que el primer INSERT sea visible para el segundo).
+**Then:** El sistema detecta la condición de carrera a nivel de aplicación. Se crea exactamente 1 registro de faltante para `(curso, tema, subtema, nivel)` — ya sea mediante restricción UNIQUE en BD con upsert, o lock atómico a nivel de aplicación. Se encola exactamente 1 `GenerationJob`. Verificación: `COUNT(*) FROM faltantes WHERE subtema_id = S1 AND estado = 'PENDING'` = 1. `LLEN generate_nq_questions` incrementa en 1, no en 2.
+
+---
+
+## 7. Non-Functional & Cross-Cutting
+
+### TC-16 · Máquina de estados — todos los ciclos de vida
+
+| Atributo | Valor |
+|----------|-------|
+| Prioridad | P1 |
+| Traces To | Constitution Art. 7 / Plan §2 |
+
+**Given:** Tres escenarios: (a) flujo exitoso sin duplicados, (b) flujo con reposición por duplicados, (c) error permanente.
+**When:** Se ejecuta cada escenario de principio a fin.
+**Then:**
+- **(a) Sin duplicados:** `PENDING → PROCESSING → COMPLETED`. No existe `PENDING → COMPLETED` sin `PROCESSING`.
+- **(b) Con reposición:** `PENDING → PROCESSING → PARTIAL → PROCESSING → COMPLETED`. No existe `PARTIAL → COMPLETED` sin `PROCESSING` intermedio.
+- **(c) Error permanente:** `PENDING → PROCESSING → FAILED`. No existe `PENDING → FAILED` sin `PROCESSING`.
+- Verificación para todos: `SELECT estado FROM process_traces WHERE faltante_id = F1 ORDER BY timestamp ASC`. Estados consecutivos con timestamps incrementales (`t1 < t2 < t3`).
+
+---
+
+### TC-17 · Idempotencia del GenerationJob en todos los estados terminales y activos
+
+| Atributo | Valor |
+|----------|-------|
+| Prioridad | P1 |
+| Traces To | Constitution Art. 3 |
+
+**Given:** Cuatro escenarios de faltante ya procesado: `F_COMPLETED`, `F_FAILED`, `F_PARTIAL`, `F_PROCESSING`.
+**When:** Se intenta ejecutar un segundo `GenerationJob` para cada uno (por duplicado en cola o reintento espurio).
+**Then:**
+- `F_COMPLETED`: Job B detecta `estado = COMPLETED` → early return. `NQClient::post` no invocado.
+- `F_FAILED`: Job B detecta `estado = FAILED` → early return. No se reintenta automáticamente.
+- `F_PARTIAL`: Job B detecta `estado = PARTIAL` → early return (PARTIAL es bloqueante, TC-09).
+- `F_PROCESSING`: Job B detecta `estado = PROCESSING` → early return (PROCESSING es bloqueante, TC-09).
+- En ningún caso se duplica `generated_quantity` ni se envían solicitudes adicionales a NQ. Verificación: `NQClient::post` no invocado para ninguno. `generated_quantity` sin cambio.
+
+---
+
+### TC-18 · ODISEO_KEY no expuesta en logs — todos los niveles de log
+
+| Atributo | Valor |
+|----------|-------|
+| Prioridad | P1 |
+| Traces To | Constitution Art. 2 |
+
+**Given:** `GenerationJob` ejecuta flujo exitoso (`HTTP 200`) y también falla con error `HTTP 401`. `ODISEO_KEY` está configurada en `.env`.
+**When:** El sistema registra logs en ambos escenarios (info en éxito, error en fallo). Se inspeccionan `storage/logs/laravel.log`, stack traces de Sentry y headers de requests logueados.
+**Then:** En **ningún** nivel de log (debug, info, error) aparece el valor real de `ODISEO_KEY`. Verificación: `grep -r "<valor real de ODISEO_KEY>" storage/logs/` retorna 0 líneas. `grep -ri "authorization" storage/logs/` no contiene el valor del token. Stack traces no contienen headers de autorización. El constructor de `NQClient` no loguea la key al cargarla de configuración.
+
+---
+
+### TC-19 · Campos de trazabilidad poblados correctamente al finalizar
+
+| Atributo | Valor |
+|----------|-------|
+| Prioridad | P2 |
+| Traces To | Plan §2 (Información sugerida) |
+
+**Given:** Un faltante se procesa completamente con 1 ciclo de reposición (2 duplicados requirieron 1 reposición exitosa).
+**When:** El proceso finaliza en `COMPLETED`.
+**Then:** Verificación vía `SELECT` sobre el registro del faltante:
+- `requested_quantity` = cantidad original solicitada (ej: 5).
+- `generated_quantity` = total de preguntas válidas insertadas en tabla temporal (ej: 5 = 3 iniciales + 2 reposición).
+- `pending_quantity` = `requested - generated` = 0.
+- `processed_at` = timestamp de cuando transita a `COMPLETED`, con valor no nulo.
+- `retry_count` = número de reintentos por error NQ (independiente de ciclos de reposición).
+- `reposition_cycles` = 1 (cantidad de ciclos de reposición ejecutados).
+
+---
+
+### TC-20 · División en bloques durante reposición con cantidad pendiente > 5
+
+| Atributo | Valor |
+|----------|-------|
+| Prioridad | P2 |
+| Traces To | HU-2, AC-5, AC-8 |
+
+**Given:** `requested_quantity = 15`. NQ generó 5 preguntas pero las 5 eran duplicadas. `pending_quantity = 15`.
+**When:** El sistema dispara reposición por las 15 preguntas faltantes.
+**Then:** El sistema divide la reposición en 3 bloques de 5 (5+5+5), respetando el límite máximo por transacción. No intenta enviar un solo bloque de 15. Verificación: `NQClient::post` invocado 3 veces durante la reposición, cada una con `quantity = 5`.
+
+---
+
+### TC-21 · Sanitización de contenido proveniente de NQ
+
+| Atributo | Valor |
+|----------|-------|
+| Prioridad | P1 |
+| Traces To | Constitution Art. 2 (validar y sanitizar datos de entrada externa) |
+
+**Given:** NQ responde con una pregunta cuyo `enunciado` contiene `<script>alert(1)</script>` o `opciones` con caracteres de control Unicode.
+**When:** El sistema recibe la respuesta de NQ y la procesa antes de insertar en la tabla temporal.
+**Then:** El contenido se sanitiza antes de la inserción: tags HTML escapados (`&lt;script&gt;`), caracteres de control removidos o normalizados. La pregunta se inserta sanitizada, no con el payload crudo de NQ. Verificación: `SELECT enunciado FROM preguntas_temporal WHERE id = P1` no contiene `<script>` sin escapar.
+
+---
+
+### TC-22 · NQ devuelve preguntas duplicadas dentro del mismo lote
+
+| Atributo | Valor |
+|----------|-------|
+| Prioridad | P2 |
+| Traces To | HU-2, AC-2, AC-3 |
+
+**Given:** NQ responde con 5 preguntas en un mismo bloque. 2 de ellas son idénticas entre sí (mismo `content_hash` dentro del lote).
+**When:** El validador de duplicidad procesa el lote.
+**Then:** La primera ocurrencia se inserta. La segunda se descarta como duplicada (aunque no existiera previamente en la BD). Se dispara reposición por la pregunta duplicada. Verificación: `COUNT(*) FROM preguntas_temporal WHERE bloque_id = B1` = 4 (5 - 1 duplicada interna). `rejected_questions` contiene 1 registro con `reason = 'duplicate_in_batch'`.
+
+---
+
+## 8. Matriz de Trazabilidad
+
+| Requisito | TC asociado | Estado |
+|-----------|-------------|--------|
+| HU-1 AC-1 — Ejecución automática | TC-01, TC-15 | ✅ |
+| HU-1 AC-2 — FIFO cronológico | TC-03 | ✅ |
+| HU-1 AC-3 — Cola FIFO | TC-03 | ✅ |
+| HU-1 AC-4 — Cursos habilitados | TC-04, TC-10 | ✅ |
+| HU-1 AC-5 — Atributos payload | TC-04 | ✅ |
+| HU-1 AC-6 — División por bloques | TC-02, TC-20 | ✅ |
+| HU-1 AC-7 — API existente NQ | TC-01, TC-02, TC-05 | ✅ |
+| HU-1 AC-8 — Error → PENDING | TC-11 | ✅ |
+| HU-2 AC-1 — Recepción automática | TC-05 | ✅ |
+| HU-2 AC-2 — Validación duplicidad | TC-05, TC-08, TC-22 | ✅ |
+| HU-2 AC-3 — Descarte duplicados | TC-05, TC-08, TC-22 | ✅ |
+| HU-2 AC-4 — Reposición automática | TC-08 | ✅ |
+| HU-2 AC-5 — Reenvío bajo bloques | TC-08, TC-20 | ✅ |
+| HU-2 AC-6 — Tabla temporal | TC-05 | ✅ |
+| HU-2 AC-7 — Conservación flujo actual | TC-05 | ✅ |
+| HU-2 AC-8 — Reintento hasta completar | TC-08 | ✅ |
+| Spec CB — Misma combinación repetida | TC-06 | ✅ |
+| Spec CB — Reposición en curso | TC-09, TC-15 | ✅ |
+| Spec CB — NQ devuelve duplicados | TC-05, TC-08, TC-22 | ✅ |
+| Spec CB — NQ respuesta inválida | TC-12, TC-14 | ✅ |
+| Spec CB — Inconsistencia académica | TC-07 | ✅ |
+| NFR-1 — Procesamiento asíncrono | TC-01, TC-03, TC-11 | ✅ |
+| NFR-2 — Integridad / no duplicados | TC-05, TC-08, TC-13, TC-22 | ✅ |
+| NFR-3 — Procesamiento concurrente | TC-09, TC-15 | ✅ |
+| Constitution Art. 2 — Seguridad (secretos, sanitización) | TC-18, TC-21 | ✅ |
+| Constitution Art. 3 — Idempotencia, concurrencia | TC-17, TC-09 | ✅ |
+| Constitution Art. 7 — Trazabilidad, logs, estados | TC-16, TC-13, TC-19 | ✅ |
+| Plan §2 — Estado PARTIAL | TC-08, TC-16 | ✅ |
+| Plan §2 — Campos trazabilidad | TC-19 | ✅ |
+| Rotura-1 — Doble encolado concurrente | TC-15 | ✅ |
+| Rotura-2 — PARTIAL bloqueante | TC-09 | ✅ |
+| Rotura-3 — Límite 3 ciclos reposición | TC-08 | ✅ |
+| Rotura-5 — Descarte respuesta NQ en fallo BD | TC-13 | ✅ |
+| Rotura-6 — Idempotencia extendida | TC-17 | ✅ |
+| Rotura-7 — FIFO conserva timestamp | TC-03 | ✅ |
+| Rotura-8 — ODISEO_KEY en todos los logs | TC-18 | ✅ |
+| Rotura-9 — División reposición > 5 | TC-20 | ✅ |
+| Rotura-10 — Ciclos de estado alternos | TC-16 | ✅ |
+| Rotura-14 — Sanitización contenido NQ | TC-21 | ✅ |
+
+---
+
+## Notas para el equipo
+
+- **Rotura-4 (stale jobs):** Fuera de scope según decisión del equipo. Si un worker muere en `PROCESSING`, el registro queda en ese estado sin recuperación automática. Considerar un scheduled command en futuras iteraciones.
+- **Rotura-11 (NEEDS_CLARIFICATION obsoleto):** El spec §6 aún lista 3 preguntas como no resueltas, pero los ACs de HU-1 y HU-2 ya las responden (5 por bloque, acumulativos, cola FIFO). Se recomienda actualizar `spec.md` §6 para eliminar la contradicción.
+- **Rotura-12 (banco vs tabla temporal):** Confirmado: las preguntas van a la tabla temporal (banco IA pre-Lumeria), no directo al banco final. HU-2 y plan son la fuente canónica. Se recomienda corregir spec §7 (Scope IN) que dice "inserción dentro del banco".
+- **Rotura-13 (HTTP response al usuario):** El endpoint de generación de material es preexistente y no forma parte de esta implementación.
 
 ---
 
 ## Vigencia
 
-Este plan de pruebas entra en vigor inmediatamente y aplica a la feature de automatización de preguntas NQ. Debe actualizarse conforme se descubran nuevos escenarios durante la implementación o se resuelvan las preguntas pendientes de clarificación del spec.
+Este plan de pruebas entra en vigor inmediatamente. Todo TC debe ser verificable con resultados medibles (estados en BD, conteo de registros, HTTP status codes, contenido de logs). El artefacto debe actualizarse si se modifican los ACs del spec o los estados del plan.

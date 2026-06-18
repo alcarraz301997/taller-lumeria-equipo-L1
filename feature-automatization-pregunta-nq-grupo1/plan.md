@@ -18,7 +18,9 @@ Los registros pendientes serán procesados automáticamente mediante una cola FI
 
 Antes de enviar una solicitud a NQ, el sistema validará que el curso se encuentre habilitado para la integración y dividirá la solicitud en bloques de hasta 5 preguntas según las restricciones de la API de NQ.
 
-Las preguntas recibidas serán sometidas al flujo existente de validación de duplicidad. Las preguntas válidas serán almacenadas en la tabla temporal de revisión docente y las preguntas descartadas generarán automáticamente nuevas solicitudes hasta completar la cantidad originalmente requerida.
+Las preguntas recibidas serán sometidas al flujo existente de validación de duplicidad. Las preguntas válidas serán almacenadas en la tabla temporal de revisión docente y las preguntas descartadas generarán automáticamente nuevas solicitudes hasta completar la cantidad originalmente requerida, con un máximo de 3 ciclos de reposición. Si tras 3 ciclos no se alcanza la cantidad requerida, el faltante transitará a `FAILED` con motivo `max_reposition_cycles_exceeded`.
+
+Si un registro vuelve a `PENDING` por error de NQ (HTTP 5xx, timeout), conservará su timestamp original de generación para mantener la prioridad FIFO.
 
 Finalmente, el sistema registrará el resultado del proceso para garantizar trazabilidad y monitoreo.
 
@@ -29,26 +31,32 @@ Generación de material
         ↓
 Registro de faltante (PENDING)
         ↓
-Cola FIFO
+Cola FIFO (ordenado por fecha generación)
         ↓
 Worker asíncrono
         ↓
 Validación de curso habilitado
-        ↓
-División en bloques (máx. 5)
-        ↓
-Integración con NQ
-        ↓
-Recepción de preguntas
-        ↓
-Validación de duplicidad
-        ↓
-¿Cantidad requerida completada?
-      ↓ No                  ↓ Sí
-Solicitar reposición     Almacenar preguntas válidas
-      ↓                  en tabla temporal
-Actualizar estado              ↓
-(PARTIAL)                 COMPLETED
+   ↓ No                ↓ Sí
+FAILED              Continuar
+(no habilitado)         ↓
+                División en bloques (máx. 5)
+                        ↓
+                Integración con NQ
+                   ↓ OK           ↓ Error (5xx/timeout)
+                Recepción      Reintentos (backoff)
+                    ↓               ↓
+                Validación     Agotados → PENDING
+                duplicidad     (conserva timestamp)
+                    ↓
+                ¿Cantidad requerida completada?
+                      ↓ No                  ↓ Sí
+                ¿Ciclos < 3?           COMPLETED
+              ↓ Sí          ↓ No
+         Solicitar        FAILED
+         reposición    (max_reposition
+             ↓         _cycles_exceeded)
+         Actualizar
+         (PARTIAL)
 ```
 
 ---
@@ -76,6 +84,7 @@ Información sugerida:
 * pending_quantity
 * processed_at
 * retry_count
+* reposition_cycles
 
 ### Control de reposición
 
@@ -142,7 +151,7 @@ Incrementaría el tiempo de respuesta de la generación de materiales y afectar�
 | Procesamiento simultáneo del mismo faltante | Control de estados                  |
 | Alto volumen de faltantes pendientes        | Cola FIFO                           |
 | Cursos no habilitados                       | Validación previa                   |
-| Reposición incompleta                       | Solicitudes adicionales             |
+| Reposición incompleta                       | Máximo 3 ciclos de reposición, luego FAILED |
 
 ### Dependencias
 
