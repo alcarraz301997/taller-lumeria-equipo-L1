@@ -45,6 +45,7 @@ Aunque los 27 casos de prueba cubren exhaustivamente los requisitos funcionales,
 - **Notificación/alertas de estados FAILED:** No existen TC para verificar que el sistema notifique o alerte (email, dashboard, webhook) cuando un faltante transita a FAILED (ej. `max_reposition_cycles_exceeded`, `curso no habilitado`). La constitución exige que las condiciones de fallo permanente sean detectables y trazables por el equipo de operaciones (constitution.md:96-97).
 - **Migración de datos preexistentes:** No se cubre el comportamiento del sistema con registros de faltantes creados antes de la activación de esta funcionalidad. La constitución exige definir y probar el comportamiento con datos preexistentes (constitution.md:101). ¿Deben procesarse retroactivamente o solo aplica a nuevos registros? Se creará TC-33 en Fase 2.
 - **Rotura-11 y Rotura-12 sin definir:** El documento afirma 14 roturas detectadas en grilling, pero solo 12 están identificadas en la matriz. Rotura-11 y Rotura-12 requieren definición por parte del equipo (QA + Tech Lead + PO). Ver notas al final del documento.
+- **Re-procesamiento programado de FAILED:** El plan establece que registros `FAILED` pueden re-procesarse automáticamente si la causa se resuelve (plan.md:33). TC-17 cubre la idempotencia inmediata del job, pero no existe un TC que valide el mecanismo programado de re-evaluación periódica de registros `FAILED` (consulta a cola, re-encolado si causa resuelta). Pendiente de inclusión en Fase 2.
 
 ---
 
@@ -136,16 +137,16 @@ Las pruebas se ejecutan en entornos aislados. La API de NQ se simula (mocks) par
 
 ## 4. Edge Cases
 
-### TC-06 · Consolidación acumulativa de registros repetidos
+### TC-06 · Múltiples faltantes misma combinación — procesamiento individual
 
 | Atributo | Valor |
 |----------|-------|
 | Prioridad | P1 |
-| Traces To | Spec — Caso Borde (múltiples faltantes misma combinación) / Plan §1 (acumulativos) |
+| Traces To | Spec — Caso Borde (múltiples faltantes misma combinación) / Plan §1 (registros separados, no se acumulan) |
 
 **Given:** Se generan 3 registros de faltante para la misma combinación `(Álgebra, Ecuaciones, Lineales, Nivel 1)` con `requested_quantity = 5` cada uno, antes de ser procesados.
-**When:** El worker asíncrono identifica los registros pendientes para esa combinación.
-**Then:** El sistema suma las cantidades: `requested_quantity total = 15`. Se envía a NQ una solicitud consolidada con `quantity = 15` (dividida en 3 bloques de 5 por TC-02), no 3 solicitudes independientes de 5. Verificación: `COUNT(DISTINCT NQClient::post para combinación X)` = 3 bloques agrupados bajo un mismo proceso, no 9 llamadas independientes.
+**When:** El worker asíncrono consume la cola FIFO en orden de generación.
+**Then:** El sistema procesa cada registro de forma **independiente** (no consolida). Cada faltante genera su propia solicitud a NQ por `quantity = 5`. Los 3 registros mantienen trazabilidad separada y transitan individualmente por la máquina de estados. Verificación: `NQClient::post` invocado 3 veces, cada una con `quantity = 5` y `faltante_id` distinto. `COUNT(*) FROM process_traces WHERE combinacion = '(Álgebra, Ecuaciones, Lineales, Nivel 1)'` = 3 procesos independientes.
 
 ---
 
@@ -199,26 +200,26 @@ Las pruebas se ejecutan en entornos aislados. La API de NQ se simula (mocks) par
 | Atributo | Valor |
 |----------|-------|
 | Prioridad | P1 |
-| Traces To | HU-1, AC-4 |
+| Traces To | HU-1, AC-4 / Plan §1 (CANCELLED) |
 
 **Given:** Un faltante pertenece al curso `Geometría`, el cual no está en la lista de cursos habilitados (`Álgebra, Aritmética, Trigonometría, Química`).
 **When:** El sistema valida el curso antes de enviar a NQ.
-**Then:** El envío se bloquea. El faltante transita a `FAILED` con motivo: `curso no habilitado para integración NQ`. No se consume crédito. Verificación: `NQClient::post` no es invocado. `faltantes.estado = 'FAILED'`.
+**Then:** El envío se bloquea. El faltante transita a `CANCELLED` con motivo: `course_disabled_in_nq`. No se consume crédito. `CANCELLED` es estado terminal (no se re-procesa automáticamente). Verificación: `NQClient::post` no es invocado. `faltantes.estado = 'CANCELLED'`. `faltantes.failure_reason = 'course_disabled_in_nq'`.
 
 ---
 
 ## 5. Error Scenarios
 
-### TC-11 · NQ HTTP 500 — registro permanece PENDING con backoff
+### TC-11 · NQ HTTP 500 — backoff por ciclo + FAILED al agotar reintentos globales
 
 | Atributo | Valor |
 |----------|-------|
 | Prioridad | P1 |
-| Traces To | HU-1, AC-8 |
+| Traces To | HU-1, AC-8 / Plan §1 (5xx reintentos → PENDING → FAILED global) |
 
-**Given:** La API de NQ responde `HTTP 500` en cada intento.
+**Given:** La API de NQ responde `HTTP 500` en cada intento durante múltiples ciclos de procesamiento.
 **When:** El `GenerationJob` envía la solicitud y recibe `500`.
-**Then:** El sistema ejecuta reintentos con backoff incremental. Si todos fallan, el registro **permanece en estado `PENDING`** (no transita a `FAILED`) con `retry_count` incrementado y conservando su timestamp original de generación. El intento fallido queda registrado en logs. Verificación: `faltantes.estado = 'PENDING'`, `faltantes.retry_count > 0`.
+**Then:** El sistema ejecuta reintentos con backoff incremental dentro del ciclo (máximo 3 por ciclo). Si los 3 reintentos del ciclo fallan, el registro vuelve a `PENDING` conservando su timestamp original de generación y con `retry_count` incrementado. Un worker posterior lo retoma en orden FIFO. Si el registro supera el tope global de reintentos acumulados (`max_retries_exceeded`), transita a `FAILED` con motivo: `max_retries_exceeded`. Verificación: por ciclo — `NQClient::post` ≤ 3 invocaciones, `faltantes.estado = 'PENDING'`, `retry_count > 0`. Al superar tope global — `faltantes.estado = 'FAILED'`, `faltantes.failure_reason = 'max_retries_exceeded'`.
 
 ---
 
@@ -301,7 +302,9 @@ Las pruebas se ejecutan en entornos aislados. La API de NQ se simula (mocks) par
 | Atributo | Valor |
 |----------|-------|
 | Prioridad | P1 |
-| Traces To | Constitution Art. 3 |
+| Traces To | Constitution Art. 3 / Plan §1 (re-procesamiento programado de FAILED) |
+
+> **Nota:** Este TC verifica idempotencia inmediata: un `GenerationJob` duplicado no debe re-procesar un registro que ya está en estado terminal o activo. El re-procesamiento programado de registros `FAILED` (cuando la causa se resuelve, ej. curso re-habilitado) es un mecanismo independiente vía consulta periódica a la cola — no mediante reintento espurio del mismo job. Ver plan.md:33.
 
 **Given:** Cinco escenarios de faltante ya procesado: `F_COMPLETED`, `F_FAILED`, `F_CANCELLED`, `F_PARTIAL`, `F_PROCESSING`.
 **When:** Se intenta ejecutar un segundo `GenerationJob` para cada uno (por duplicado en cola o reintento espurio).
@@ -432,17 +435,17 @@ Las pruebas se ejecutan en entornos aislados. La API de NQ se simula (mocks) par
 
 ---
 
-### TC-26 · Máximo 3 reintentos por ciclo para error NQ 5xx
+### TC-26 · Máximo 3 reintentos por ciclo para error NQ 5xx — sin reintento ilimitado
 
 | Atributo | Valor |
 |----------|-------|
 | Prioridad | P2 |
-| Traces To | HU-1, AC-8 / Plan §4 (reintentos) |
+| Traces To | HU-1, AC-8 / Plan §1 (reintentos por ciclo ≤ 3) |
 
 **Given:** NQ responde `HTTP 500` en cada intento dentro de un mismo ciclo de procesamiento.
 **When:** Worker inicia procesamiento → intento 1 (500) → intento 2 (500) → intento 3 (500).
-**Then:** Tras 3 reintentos fallidos en este ciclo, el sistema NO reintenta una 4ª vez. El registro vuelve a `PENDING` con `retry_count = 3`. El worker pickup en el siguiente ciclo comenzará de nuevo con 3 reintentos frescos.
-**Verification:** `NQClient::post` invocado exactamente 3 veces en este ciclo. `retry_count = 3`. Estado = `PENDING`. No hay un 4º intento en el mismo ciclo.
+**Then:** Tras 3 reintentos fallidos en este ciclo, el sistema NO reintenta una 4ª vez dentro del mismo ciclo. El registro vuelve a `PENDING` con `retry_count` incrementado, conservando su timestamp original para mantener prioridad FIFO. El worker pickup en el siguiente ciclo aplica 3 reintentos frescos. Si el registro acumula múltiples ciclos fallidos, eventualmente transita a `FAILED` con motivo `max_retries_exceeded` (ver TC-11).
+**Verification:** `NQClient::post` invocado exactamente 3 veces en este ciclo. `retry_count > 0`. `faltantes.estado = 'PENDING'`. No hay un 4º intento en el mismo ciclo.
 
 ---
 
@@ -527,7 +530,7 @@ Las pruebas se ejecutan en entornos aislados. La API de NQ se simula (mocks) par
 | HU-1 AC-5 — Atributos payload | TC-04 | ✅ |
 | HU-1 AC-6 — División por bloques | TC-02, TC-20 | ✅ |
 | HU-1 AC-7 — API existente NQ | TC-01, TC-05 | ✅ |
-| HU-1 AC-8 — Error → PENDING | TC-11 | ✅ |
+| HU-1 AC-8 — Error → PENDING + FAILED global | TC-11, TC-26 | ✅ |
 | HU-2 AC-1 — Recepción automática | TC-05 | ✅ |
 | HU-2 AC-2 — Validación duplicidad | TC-05, TC-08, TC-22 | ✅ |
 | HU-2 AC-3 — Descarte duplicados | TC-05, TC-08, TC-22 | ✅ |
@@ -549,6 +552,11 @@ Las pruebas se ejecutan en entornos aislados. La API de NQ se simula (mocks) par
 | Constitution Art. 7 — Trazabilidad, logs, estados | TC-16, TC-13, TC-19 | ✅ |
 | Plan §2 — Estado PARTIAL | TC-08, TC-16 | ✅ |
 | Plan §2 — Campos trazabilidad | TC-19 | ✅ |
+| Plan §1 — No consolidación (registros separados) | TC-06 | ✅ |
+| Plan §1 — Estado CANCELLED | TC-10, TC-16, TC-17 | ✅ |
+| Plan §1 — FAILED global (max_retries_exceeded) | TC-11, TC-26 | ✅ |
+| Plan §1 — Re-procesamiento programado FAILED | — | ⚠️ Sin TC |
+| Plan §1 — Delay fijo configurable entre bloques | TC-02 | ✅ |
 | Rotura-1 — Doble encolado concurrente | TC-15 | ✅ |
 | Rotura-2 — PARTIAL bloqueante | TC-09 | ✅ |
 | Rotura-3 — Límite 3 ciclos reposición | TC-08 | ✅ |
@@ -575,7 +583,8 @@ Las pruebas se ejecutan en entornos aislados. La API de NQ se simula (mocks) par
 - **Rotura-11 y Rotura-12:** Detectadas en sesión de grilling pero no definidas en la matriz de trazabilidad. El equipo (QA + Tech Lead + PO) debe definir ambos riesgos y asignarles TC correspondiente o documentar su exclusión justificada (similar a Rotura-13).
 - **Rotura-13 (HTTP response al usuario):** El endpoint de generación de material es preexistente y no forma parte de esta implementación.
 - **TC pendientes (Fase 2):** Se crearán TC-28 (HTTP 4xx → FAILED inmediato), TC-29 (timeout HTTP), TC-30 (Redis indisponible), TC-31 (HTTP 429 rate limiting), TC-32 (carga/volumen FIFO) y TC-33 (datos preexistentes / migración) para cubrir los gaps identificados en "Qué quedó sin cubrir" y satisfacer los requisitos de la constitución (Art. 6.3-6.7).
-- **Decisiones pendientes (Fase 1):** Quedan 4 contradicciones entre spec/plan/test-cases que requieren resolución del equipo: (1) consolidación vs no consolidación de registros repetidos, (2) CANCELLED vs FAILED para curso no habilitado en NQ, (3) PENDING vs FAILED al agotar reintentos, (4) re-procesamiento automático de registros FAILED. Ver plan de acción.
+- **Re-procesamiento programado de FAILED:** El plan establece que registros `FAILED` pueden re-procesarse si la causa se resuelve (plan.md:33). TC-17 cubre la idempotencia inmediata del job (no re-procesar duplicados). No existe aún un TC que cubra el mecanismo programado de re-evaluación de `FAILED`. Pendiente de inclusión en Fase 2.
+- **Alineación spec/plan/test-cases:** Las 4 contradicciones críticas detectadas en la auditoría han sido resueltas alineando test-cases con el plan técnico como fuente autoritativa: (1) TC-06 ahora refleja procesamiento individual sin consolidación, (2) TC-10 ahora usa `CANCELLED` para curso no habilitado en NQ, (3) TC-11 y TC-26 ahora distinguen reintentos por ciclo (→ `PENDING`) del FAILED global por `max_retries_exceeded`, (4) TC-17 ahora documenta la distinción entre idempotencia inmediata y re-procesamiento programado de `FAILED`.
 
 ---
 
