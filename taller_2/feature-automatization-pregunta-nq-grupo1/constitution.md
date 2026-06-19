@@ -73,7 +73,7 @@
 ### 6.3 Resiliencia y recuperación
 
 * Toda operación asíncrona debe incluir casos de prueba para: reintentos con backoff, límites máximos de reintentos por ciclo y totales acumulados, distinción de errores 4xx vs 5xx/timeout, re-procesamiento automático de registros FAILED cuando la causa se resuelve.
-* Los fallos de infraestructura deben contemplarse explícitamente: indisponibilidad de Redis (cola), indisponibilidad de base de datos durante inserción, timeout del cliente HTTP hacia servicios externos.
+* Los fallos de infraestructura deben contemplarse explícitamente: indisponibilidad de Redis (cola y caché), indisponibilidad de base de datos durante inserción, timeout del cliente HTTP hacia servicios externos.
 * Los mecanismos de integridad transaccional (transacción única preguntas + faltante) deben ser verificados para garantizar que un crash del worker no produzca registros huérfanos ni estados inconsistentes.
 * Debe verificarse que los errores de infraestructura no produzcan pérdida de trazabilidad ni consumo duplicado de créditos externos.
 
@@ -88,6 +88,7 @@
   - HTTP 5xx (errores de servidor) — reintentos con backoff, máximo 3 por ciclo
   - Timeout de conexión / lectura — mismo tratamiento que 5xx
   - HTTP 4xx (bad request, auth fallida) — FAILED inmediato sin reintento
+  - HTTP 429 (Too Many Requests) — backoff respetando header `Retry-After`, reintentos máx 3
   - Respuesta HTTP 200 con body inválido o incompleto (schema no esperado)
   - Respuesta exitosa con cantidad de datos distinta a la solicitada (exceso o defecto)
 

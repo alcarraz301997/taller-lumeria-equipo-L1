@@ -1,7 +1,7 @@
 # Test Cases — Automatización de Preguntas NQ
 
 > Plan de pruebas para la orquestación asíncrona de reposición de stock académico e integración con NQ.
-> Cobertura: HU-1 (8 ACs), HU-2 (8 ACs), Casos Borde, NFRs, Constitution, Plan.
+> Cobertura: HU-1 (8 ACs), HU-2 (9 ACs), Casos Borde, NFRs, Constitution, Plan.
 > Incluye mitigaciones para 14 roturas detectadas en grilling (concurrencia en encolado, PARTIAL, idempotencia extendida, sanitización, ciclos de reposición, FIFO con reintentos).
 
 ---
@@ -10,7 +10,7 @@
 
 ### ¿Qué se prueba?
 
-Se valida la funcionalidad completa de automatización de reposición de preguntas académicas mediante integración con NQ, cubriendo dos historias de usuario (HU-1 y HU-2), sus 16 criterios de aceptación, 5 casos borde, los 3 requisitos no funcionales, y los artículos aplicables de la Constitución del proyecto (seguridad, idempotencia, trazabilidad). Los 27 casos de prueba diseñados verifican:
+Se valida la funcionalidad completa de automatización de reposición de preguntas académicas mediante integración con NQ, cubriendo dos historias de usuario (HU-1 y HU-2), sus 16 criterios de aceptación, 5 casos borde, los 3 requisitos no funcionales, y los artículos aplicables de la Constitución del proyecto (seguridad, idempotencia, trazabilidad). Los 31 casos de prueba (TC-01 a TC-31) diseñados verifican:
 
 - **Orquestación de envío (HU-1):** Detección automática de stock insuficiente, división de solicitudes en bloques de 5 preguntas, procesamiento FIFO por fecha de generación, validación de cursos habilitados (Álgebra, Aritmética, Trigonometría, Química), construcción de payload con atributos requeridos (curso, tema, subtema, nivel).
 - **Validación y almacenamiento (HU-2):** Recepción automática de respuestas NQ, validación de duplicidad usando lógica existente de Lumeria, descarte automático de duplicados, solicitud de reposición por preguntas faltantes (máximo 3 ciclos), almacenamiento en tabla temporal de revisión docente, conservación del flujo actual de revisión.
@@ -33,13 +33,9 @@ Las pruebas se estructuran con un enfoque **basado en riesgos y trazabilidad**:
 
 ### Qué quedó sin cubrir
 
-Aunque los 27 casos de prueba cubren exhaustivamente los requisitos funcionales, de negocio y las roturas detectadas, se identifican las siguientes áreas sin cobertura explícita en este plan:
+Aunque los 31 casos de prueba cubren exhaustivamente los requisitos funcionales, de negocio y las roturas detectadas, se identifican las siguientes áreas sin cobertura explícita en este plan:
 
-- **Pruebas de carga/volumen:** No existen TC para escenarios de alto volumen (miles de faltantes pendientes simultáneos) ni pruebas de estrés sobre la cola Redis. El plan de riesgos menciona "alto volumen de faltantes pendientes" como riesgo identificado, pero no se traduce en un TC de rendimiento.
-- **Timeout de NQ como error independiente:** El plan técnico menciona "timeout" junto con HTTP 5xx como errores de NQ, pero TC-11 solo cubre explícitamente HTTP 500. No hay un TC específico para `connection timeout` o `read timeout` del cliente HTTP hacia NQ.
-- **Rate limiting de NQ (HTTP 429):** No se contempla el escenario donde NQ responde con HTTP 429 (Too Many Requests) ni cómo el sistema debe reaccionar (backoff, respetar header `Retry-After`).
 - **Stale job en estado PARTIAL:** TC-23 cubre la recuperación de trabajos zombies en estado PROCESSING (> 30 min), pero no contempla explícitamente un worker que muere mientras el faltante está en PARTIAL. El scheduled command `faltantes:recover-stale` solo actúa sobre `PROCESSING`.
-- **Indisponibilidad de Redis:** TC-27 asume Redis disponible para cachear respuestas de NQ ante fallo de BD. No existe TC que cubra qué sucede si Redis no está disponible durante la operación de caché o durante la operación normal de la cola.
 - **Notificación/alertas de estados FAILED:** No existen TC para verificar que el sistema notifique o alerte (email, dashboard, webhook) cuando un faltante transita a FAILED (ej. `max_reposition_cycles_exceeded`, `curso no habilitado`). La trazabilidad se limita a logs y registros en BD.
 - **Fallo de autenticación NQ (HTTP 401/403):** TC-18 verifica que `ODISEO_KEY` no se expone en logs durante un 401, pero no existe un TC que defina el comportamiento completo del sistema ante credenciales inválidas o expiradas como escenario de error independiente (transición de estado, reintentos, registro de auditoría).
 - **Migración de datos preexistentes:** No se cubre el comportamiento del sistema con registros de faltantes creados antes de la activación de esta funcionalidad. ¿Deben procesarse retroactivamente o solo aplica a nuevos registros?
@@ -453,6 +449,62 @@ Las pruebas se ejecutan en entornos aislados. La API de NQ se simula (mocks) par
 
 ---
 
+### TC-28 · NQ responde HTTP 429 (Rate Limiting) — backoff con Retry-After
+
+| Atributo | Valor |
+|----------|-------|
+| Prioridad | P1 |
+| Traces To | NFR-5 / Spec §3 — HTTP 429 |
+
+**Given:** La API de NQ responde `HTTP 429` con header `Retry-After: 30`.
+**When:** El `GenerationJob` envía la solicitud y recibe `429`.
+**Then:** El sistema NO intenta inmediatamente. Espera 30 segundos (valor del header `Retry-After`) y reintenta. Si tras 3 reintentos el error persiste, el registro vuelve a `PENDING` conservando su timestamp original.
+**Verification:** `NQClient::post` invocado 3 veces con intervalos ≥ 30s entre cada uno. `faltantes.estado = 'PENDING'`, `retry_count = 3`. Log contiene entry con `reason = 'rate_limited'`.
+
+---
+
+### TC-29 · Connection / Read timeout hacia NQ
+
+| Atributo | Valor |
+|----------|-------|
+| Prioridad | P2 |
+| Traces To | NFR-6 / Spec §3 — Timeouts |
+
+**Given:** El cliente HTTP lanza excepción por `connection timeout` (NQ no responde en < 5s).
+**When:** El `GenerationJob` envía la solicitud y captura el timeout.
+**Then:** El sistema trata el timeout como error 5xx: reintenta con backoff hasta 3 veces. Si todos fallan, el registro vuelve a `PENDING` con `retry_count` incrementado y conservando su timestamp original.
+**Verification:** `NQClient::post` invocado con backoff creciente (ej. 1s, 2s, 4s). `faltantes.estado = 'PENDING'`, `retry_count = 3`. Se prueba también con `read timeout` (respuesta parcial).
+
+---
+
+### TC-30 · Redis indisponible durante operación de cola
+
+| Atributo | Valor |
+|----------|-------|
+| Prioridad | P2 |
+| Traces To | NFR-3 / Constitution Art. 6.3 — Resiliencia |
+
+**Given:** Redis no está disponible (caída del servicio, timeout de conexión).
+**When:** El sistema intenta encolar un `GenerationJob` o cachear respuesta de NQ.
+**Then:** El job de encolado falla con excepción. El registro de faltante permanece en `PENDING`. En el caso de caché de respuesta NQ (TC-27), el sistema no persiste la respuesta en caché y en el reintento debe llamar a NQ nuevamente (consume nuevo crédito). Se registra alerta en logs para monitoreo vía Horizon.
+**Verification:** `faltantes.estado = 'PENDING'` sin cambios. Log contiene entry con `reason = 'redis_unavailable'`.
+
+---
+
+### TC-31 · Carga/volumen — procesamiento FIFO con miles de registros pendientes
+
+| Atributo | Valor |
+|----------|-------|
+| Prioridad | P2 |
+| Traces To | NFR-3 / Constitution Art. 6.4 — Rendimiento |
+
+**Given:** Existen 5000 registros de faltantes `PENDING` con fechas de generación distribuidas en 7 días.
+**When:** El worker batch procesa la cola FIFO secuencialmente.
+**Then:** Los registros se procesan en estricto orden cronológico sin pérdida de prioridad. El throughput se mantiene dentro de la latencia esperada (< 1s por registro, sin contar tiempo de NQ). No se observan timeouts de cola ni degradación en el orden FIFO.
+**Verification:** `SELECT faltante_id FROM faltantes WHERE estado = 'COMPLETED' ORDER BY processed_at ASC` retorna los IDs en orden FIFO. El tiempo total de procesamiento de los 5000 registros es medible y documentado.
+
+---
+
 ## 9. Matriz de Trazabilidad
 
 | Requisito | TC asociado | Estado |
@@ -501,6 +553,12 @@ Las pruebas se ejecutan en entornos aislados. La API de NQ se simula (mocks) par
 | PARTIAL + error NQ incrementa reposition_cycles | TC-25 | ✅ |
 | Máximo 3 reintentos por ciclo NQ 5xx | TC-26 | ✅ |
 | Cache respuesta NQ en fallo BD | TC-27 | ✅ |
+| HU-2 AC-9 — Máx 3 ciclos reposición | TC-08, TC-25 | ✅ |
+| NFR-4 — Latencia job < 1s | TC-31 | ✅ |
+| NFR-5 — HTTP 429 (Rate Limiting) | TC-28 | ✅ |
+| NFR-6 — Connection/Read timeout | TC-29 | ✅ |
+| Redis indisponible | TC-30 | ✅ |
+| Carga/volumen (5000 registros FIFO) | TC-31 | ✅ |
 
 ---
 

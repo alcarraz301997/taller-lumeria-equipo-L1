@@ -65,10 +65,10 @@ Administrador
 
 ## Criterios de Aceptación
 
-### 1. Ejecución automática del envío
+### 1. Ejecución automática del envío (batch programado)
 
 **WHEN** existan registros de preguntas faltantes pendientes de procesamiento
-**THE SYSTEM SHALL** iniciar automáticamente el proceso de envío hacia NQ sin requerir intervención manual.
+**THE SYSTEM SHALL** procesarlos mediante un worker batch programado que ejecuta la cola FIFO periódicamente, sin requerir intervención manual. El envío no ocurre inmediatamente al registrarse el faltante, sino en el siguiente ciclo del worker.
 
 ---
 
@@ -229,6 +229,12 @@ Administrador
 **WHILE** la cantidad de preguntas válidas almacenadas sea menor a la cantidad originalmente solicitada
 **THE SYSTEM SHALL** continuar solicitando automáticamente nuevas preguntas a NQ hasta completar el total requerido.
 
+---
+
+### 9. Límite máximo de cycles de reposición
+
+**IF** se hayan ejecutado 3 `reposition_cycles` sin alcanzar `generated_quantity >= requested_quantity`
+**THEN THE SYSTEM SHALL** transicionar el `missing_record` a `FAILED` con `failure_reason = 'max_reposition_cycles_exceeded'` y detener los reintentos automáticos.
 
 # 3. Requisitos No Funcionales (NFR)
 
@@ -243,6 +249,18 @@ La inserción de nuevas preguntas en el banco debe validar reglas de integridad 
 ### NFR-3
 
 El sistema debe soportar procesamiento concurrente de múltiples registros de faltantes pendientes sin bloquear operaciones simultáneas de generación.
+
+### NFR-4 (Latencia)
+
+El tiempo de procesamiento del job por registro de faltante (sin incluir el tiempo de respuesta de NQ) debe ser menor a 1 segundo.
+
+### NFR-5 (HTTP 429 — Rate Limiting)
+
+Si NQ responde con HTTP 429 (Too Many Requests), el sistema debe aplicar backoff respetando el header `Retry-After` y reintentar hasta un máximo de 3 veces. Si se agotan los reintentos, el registro vuelve a `PENDING` conservando su timestamp original.
+
+### NFR-6 (Timeouts)
+
+Los errores de connection timeout y read timeout hacia la API de NQ deben tratarse con el mismo mecanismo que los errores HTTP 5xx: reintentos con backoff (máximo 3), y si se agotan, el registro vuelve a `PENDING` conservando su timestamp.
 
 ---
 
@@ -264,11 +282,15 @@ Si esta relación no existe o presenta inconsistencias, el sistema no podrá pro
 
 ---
 
-# 6. NEEDS_CLARIFICATION
+# 6. Decisiones Tomadas (ex NEEDS_CLARIFICATION)
 
-1. ¿Cuántas preguntas debe solicitar el sistema a NQ por cada registro de faltante detectado?
-2. ¿El sistema debe consolidar registros repetidos antes de enviar solicitudes a NQ o procesarlos individualmente?
-3. ¿El procesamiento hacia NQ debe ejecutarse inmediatamente después del registro o mediante procesamiento batch programado?
+Las siguientes preguntas fueron resueltas con el Product Owner:
+
+1. **Cantidad a solicitar por faltante:** El sistema debe solicitar exactamente la cantidad de preguntas faltante (`requested_quantity`), dividida en bloques de máximo 5 preguntas por request a NQ.
+
+2. **Consolidación de registros repetidos:** No se consolidan. Cada registro de faltante se procesa individualmente, respetando su propia `requested_quantity`.
+
+3. **Trigger de envío:** El procesamiento se ejecuta mediante batch programado (worker que consume la cola FIFO periódicamente), no inmediatamente después del registro.
 
 ---
 

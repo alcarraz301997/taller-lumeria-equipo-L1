@@ -49,11 +49,15 @@ Los detalles funcionales se encuentran documentados en:
 | HU-2 AC-6 — Tabla temporal | Plan §2 (Tabla temporal) | TC-05 | ✅ |
 | HU-2 AC-7 — Conservación flujo | Plan §2 (Tabla temporal) | TC-05 | ✅ |
 | HU-2 AC-8 — Reintento hasta completar | Plan §2 (Control de reposición) | TC-08 | ✅ |
+| HU-2 AC-9 — Límite 3 ciclos reposición | Plan §1 (Flujo general) | TC-08, TC-25 | ✅ |
 | Constitution Art. 2 — Seguridad | — | TC-18, TC-21 | ✅ |
 | Constitution Art. 3 — Idempotencia | — | TC-17, TC-09 | ✅ |
 | Constitution Art. 7 — Trazabilidad | Plan §2 (Auditoría) | TC-16, TC-13, TC-19 | ✅ |
+| NFR-4 — Latencia job < 1s | Plan §5 (Trazabilidad) | TC-31 | ✅ |
+| NFR-5 — HTTP 429 (Rate Limiting) | Plan §4 (Riesgos) | TC-28 | ✅ |
+| NFR-6 — Connection/Read timeout | Plan §4 (Riesgos) | TC-29 | ✅ |
 
-> Matriz completada y validada. Total: 22 casos de prueba cubriendo 16 ACs + 5 casos borde + 3 NFRs + 3 artículos de constitución.
+> Matriz completada y validada. Total: 31 casos de prueba (TC-01 a TC-31) cubriendo 17 ACs + 5 casos borde + 6 NFRs + 3 artículos de constitución + Redis indisponible + Carga/volumen.
 
 ---
 
@@ -72,27 +76,21 @@ Equipo L2
 | Consistencia | ⚠️ Parcial | Mezcla de idioma (constitución: inglés técnicos; spec: español). "3 ciclos" aparece en TCs; falta en spec.
 | Testabilidad | ✅ Parcial | TCs detallados; faltan cargas/429/timeouts/Redis.
 
-## Hallazgos clave
+## Hallazgos clave (corregidos)
 
 - Las US y TCs son mayoritariamente medibles (DB counts, estados, invocaciones).  
-- Falta especificar NFRs numéricos (ej. SLA/latencia, RPS, contención por worker).  
-- Faltan TCs para HTTP 429, connection/read timeouts y ausencia de Redis.  
-- Ambigüedad crítica: ¿el envío se ejecuta inmediatamente al registrar el faltante o por batch programado?  
-- Consistencia: unificar convención para identificadores técnicos (course_id, estados, nombres en código).
+- **CORREGIDO:** NFRs numéricos agregados (latencia < 1s, NFR-4).  
+- **CORREGIDO:** TCs agregados para HTTP 429 (TC-28), connection/read timeouts (TC-29), Redis indisponible (TC-30) y carga/volumen (TC-31).  
+- **CORREGIDO:** Trigger definido como batch programado en HU-1 AC-1.  
+- **CORREGIDO:** Convención de idioma unificada (términos técnicos en inglés).  
 
-## Acciones recomendadas (prioridad alta → baja)
+## Acciones realizadas
 
-1. Añadir en spec.md: NFR cuantitativos (latencia objetivo por operación / throughput), y política para HTTP 429 y timeouts. (Alta)
-2. Incorporar en spec.md la regla "máximo 3 ciclos de reposición" (HU-2) para evitar ambigüedad. (Alta)
-3. Añadir TCs para HTTP 429, connection/read timeout y Redis indisponible; incluir test de carga/volumen. (Alta)
-4. Decidir convención de idioma para términos técnicos y propagarlas a constitution.md y spec.md. (Media)
-5. Definir trigger de envío (inmediato vs batch) y consolidación de faltantes (si aplica). (Bloqueante para diseño)
-
-## Preguntas abiertas (necesitan respuesta del PO)
-
-1. ¿Cuántas preguntas debe solicitar el sistema a NQ por cada faltante? (Ej: solicitar la cantidad faltante, dividida en bloques ≤5 — recomendado).  
-2. ¿Consolidar registros repetidos antes de enviar o procesarlos individualmente?  
-3. ¿Enviar inmediatamente al crearse el faltante o procesar por batch programado?
+1. ✅ Añadido en spec.md: NFRs cuantitativos (NFR-4 latencia < 1s), política HTTP 429 (NFR-5) y timeouts (NFR-6).
+2. ✅ Incorporado en spec.md: regla "máximo 3 ciclos de reposición" como HU-2 AC-9.
+3. ✅ Añadidos TCs: HTTP 429 (TC-28), connection/read timeout (TC-29), Redis indisponible (TC-30), carga/volumen (TC-31).
+4. ✅ Convención de idioma definida: términos técnicos en inglés; spec, plan y TCs actualizados.
+5. ✅ Trigger de envío definido: batch programado (HU-1 AC-1). Preguntas abiertas resueltas en spec §6.
 
 ---
 

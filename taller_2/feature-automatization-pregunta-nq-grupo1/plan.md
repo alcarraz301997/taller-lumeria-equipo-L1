@@ -27,6 +27,7 @@ Las preguntas recibidas serán sometidas al flujo existente de validación de du
 Manejo de errores HTTP:
 - **5xx / timeout**: reintentos con backoff, máximo 3 (estándar del proyecto). Si se agotan, el registro vuelve a `PENDING` conservando su timestamp original. Un worker posterior reintentará desde el bloque donde falló.
 - **4xx (bad request)**: `FAILED` inmediato sin reintento, registrado en logs para monitoreo vía Horizon.
+- **429 (Too Many Requests)**: backoff respetando el header `Retry-After` de NQ, reintentos máx 3. Si se agotan, el registro vuelve a `PENDING` conservando su timestamp original.
 
 Si un registro vuelve a `PENDING` por error de NQ (HTTP 5xx, timeout), conservará su timestamp original de generación para mantener la prioridad FIFO. Si un registro supera el tope de 3 reintentos sin éxito, transita a `FAILED` con motivo `max_retries_exceeded`.
 
@@ -178,7 +179,8 @@ Incrementaría el tiempo de respuesta de la generación de materiales y afectar�
 | Cursos no habilitados                       | Validación previa: eliminar PENDING (Lumeria) o CANCELLED (NQ) |
 | Reposición incompleta                       | Máximo 3 ciclos de reposición, luego FAILED |
 | Inanición FIFO por reintentos infinitos     | Tope de 3 reintentos por error 5xx/timeout |
-| Rate limiting de NQ                         | Delay fijo configurable entre requests |
+| Rate limiting de NQ                         | Backoff respetando Retry-After + reintentos máx 3 |
+| Redis indisponible (cola/caché)             | El job falla y el registro vuelve a PENDING. Sin caché, se consume nuevo crédito NQ en el reintento. Monitoreo vía Horizon para alertar |
 | Registros FAILED sin supervisión            | Monitoreo vía Horizon (logs)        |
 | Reproceso de FAILED no controlado           | Solo en siguiente consulta a cola si causa se resuelve |
 
@@ -206,7 +208,10 @@ Incrementaría el tiempo de respuesta de la generación de materiales y afectar�
 | NFR-1 Procesamiento asíncrono   | Gestor FIFO                      |
 | NFR-2 Evitar duplicados         | Validador de duplicidad + transacción única |
 | NFR-3 Procesamiento secuencial  | Workers secuenciales             |
-| NFR-4 Monitoreo operativo       | Horizon + logs                   |
+| NFR-4 Latencia job < 1s          | Workers secuenciales + optimización de queries |
+| NFR-5 HTTP 429                  | Backoff con Retry-After + reintentos máx 3 |
+| NFR-6 Connection/read timeout   | Mismo tratamiento que 5xx        |
+| NFR-7 Monitoreo operativo       | Horizon + logs                   |
 
 ---
 
